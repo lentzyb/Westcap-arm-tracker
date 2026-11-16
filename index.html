@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex, nofollow" />
+  <title>ARM Tracker · WestCap</title>
+  <link rel="icon" href="assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Sign-in -->
+  <section id="login" class="login hidden">
+    <div class="login-card">
+      <img src="assets/WestCapitalLending-HorizontalWhite.png" alt="West Capital Lending" class="login-logo" />
+      <p class="eyebrow">Business Development</p>
+      <h1>ARM <em>Tracker</em></h1>
+      <p class="muted-on-dark">Sign in with your WestCap email. We'll send you a one-time sign-in link.</p>
+      <form id="login-form">
+        <input id="login-email" type="email" required placeholder="name@westcapitallending.com" autocomplete="email" />
+        <button type="submit" class="btn-gold">Send sign-in link</button>
+      </form>
+      <p id="login-msg" class="login-msg"></p>
+    </div>
+  </section>
+
+  <!-- No access -->
+  <section id="denied" class="login hidden">
+    <div class="login-card">
+      <img src="assets/WestCapitalLending-HorizontalWhite.png" alt="West Capital Lending" class="login-logo" />
+      <h1>No access <em>yet</em></h1>
+      <p class="muted-on-dark">You're signed in as <span id="denied-email"></span>, but this account isn't on the approved list. Ask Matthew Blackmer to add you.</p>
+      <button class="btn-ghost-dark" data-action="signout">Sign out</button>
+    </div>
+  </section>
+
+  <!-- App -->
+  <div id="app" class="hidden">
+    <header class="topbar">
+      <div class="brand">
+        <img src="assets/WestCapitalLending-IconWhite.png" alt="" class="brand-icon" />
+        <div>
+          <div class="brand-title">ARM Tracker</div>
+          <div class="brand-sub">WestCap Direct · Business Development</div>
+        </div>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-view="overview" class="active">Overview</button>
+        <button data-view="listings">Listings</button>
+        <button data-view="realtors">Realtors</button>
+        <button data-view="los">Loan officers</button>
+        <button data-view="arms">ARMs</button>
+        <button data-view="status">Status</button>
+      </nav>
+      <div class="user">
+        <span id="user-email"></span>
+        <button class="btn-ghost-dark small" data-action="signout">Sign out</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <!-- Overview -->
+      <section id="view-overview" class="view">
+        <div class="status-row" id="status-pills"></div>
+        <h2 class="section-h">Current WestCap LOs</h2>
+        <div class="kpis" id="kpi-current"></div>
+        <h2 class="section-h">Former LOs <span class="tag">Separate · no alerts</span></h2>
+        <div class="kpis" id="kpi-former"></div>
+        <h2 class="section-h">Realtor directory and ARMs</h2>
+        <div class="kpis" id="kpi-dir"></div>
+        <div class="two-col">
+          <div class="card">
+            <h3>LOs with the most past borrowers listed</h3>
+            <div id="top-los" class="list"></div>
+          </div>
+          <div class="card">
+            <h3>Listed now, by state</h3>
+            <div id="by-state"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Listings -->
+      <section id="view-listings" class="view hidden">
+        <div class="subtabs" id="listing-scope">
+          <button data-scope="current" class="active">Current LOs</button>
+          <button data-scope="former">Former LOs</button>
+        </div>
+        <div id="former-note" class="note hidden">
+          These past borrowers belong to LOs who are no longer at WestCap. They never trigger alerts. Check with compliance before anyone reaches out.
+        </div>
+        <div class="filters">
+          <select id="f-type">
+            <option value="listed">Listed now</option>
+            <option value="likely_to_list">Likely to list</option>
+            <option value="">Both</option>
+          </select>
+          <input id="f-state" placeholder="State (e.g. MI)" maxlength="2" />
+          <input id="f-search" placeholder="Search LO name or address" />
+          <button id="f-apply" class="btn-navy">Apply</button>
+        </div>
+        <div class="table-meta" id="listings-meta"></div>
+        <div class="table-wrap"><table id="listings-table"></table></div>
+        <div class="pager" id="listings-pager"></div>
+      </section>
+
+      <!-- Realtors -->
+      <section id="view-realtors" class="view hidden">
+        <div class="filters">
+          <input id="r-search" placeholder="Search realtor name, email, or brokerage" />
+          <select id="r-sort">
+            <option value="westcap_los_worked_with">Most WestCap LOs</option>
+            <option value="total_volume_24m">Most volume (24 mo)</option>
+            <option value="buyer_side_loans_24m">Most buyer-side loans</option>
+            <option value="full_name">Name A–Z</option>
+          </select>
+          <label class="check"><input type="checkbox" id="r-email" /> Has email</label>
+          <button id="r-apply" class="btn-navy">Apply</button>
+          <button id="r-export" class="btn-outline">Export CSV</button>
+        </div>
+        <div class="table-meta" id="realtors-meta"></div>
+        <div class="table-wrap"><table id="realtors-table"></table></div>
+        <div class="pager" id="realtors-pager"></div>
+        <div id="realtor-detail" class="card hidden"></div>
+      </section>
+
+      <!-- Loan officers -->
+      <section id="view-los" class="view hidden">
+        <div class="filters">
+          <input id="lo-search" placeholder="Search LO name or NMLS" />
+          <select id="lo-filter">
+            <option value="">All active LOs</option>
+            <option value="signals">Has past borrowers listed or likely</option>
+            <option value="email">Has WestCap email</option>
+            <option value="cell">Has cell number</option>
+          </select>
+          <button id="lo-apply" class="btn-navy">Apply</button>
+        </div>
+        <div class="note">Alert settings are saved here, but nothing sends until notifications are switched on and an email or text service is connected.</div>
+        <div class="table-meta" id="los-meta"></div>
+        <div class="table-wrap"><table id="los-table"></table></div>
+        <div class="pager" id="los-pager"></div>
+      </section>
+
+      <!-- ARMs -->
+      <section id="view-arms" class="view hidden">
+        <div class="kpis" id="arm-kpis"></div>
+        <div class="card">
+          <h3>Captured volume by ARM</h3>
+          <div class="table-wrap"><table id="arm-volume-table"></table></div>
+        </div>
+        <div class="three-col">
+          <form class="card form" id="form-arm">
+            <h3>Add an ARM</h3>
+            <input name="full_name" required placeholder="Full name" />
+            <input name="email" type="email" placeholder="Email" />
+            <input name="phone" placeholder="Phone" />
+            <label>Start date <input name="start_date" type="date" /></label>
+            <label>Comp (bps per loan) <input name="comp_bps" type="number" step="0.5" value="10" /></label>
+            <button class="btn-gold" type="submit">Save ARM</button>
+            <p class="form-msg"></p>
+          </form>
+          <form class="card form" id="form-deploy">
+            <h3>Deploy an ARM to an LO</h3>
+            <select name="arm_id" required class="arm-select"></select>
+            <input name="lo_lookup" required placeholder="LO name or NMLS" list="lo-options" autocomplete="off" />
+            <datalist id="lo-options"></datalist>
+            <label>Start date <input name="start_date" type="date" /></label>
+            <button class="btn-gold" type="submit">Deploy</button>
+            <p class="form-msg"></p>
+          </form>
+          <form class="card form" id="form-loan">
+            <h3>Credit a funded loan</h3>
+            <select name="arm_id" required class="arm-select"></select>
+            <input name="lo_lookup" required placeholder="LO name or NMLS" list="lo-options" autocomplete="off" />
+            <input name="realtor_lookup" placeholder="Realtor name (optional)" list="realtor-options" autocomplete="off" />
+            <datalist id="realtor-options"></datalist>
+            <input name="loan_number" placeholder="Loan number" />
+            <input name="property_address" placeholder="Property address" />
+            <input name="loan_amount" required type="number" step="1" placeholder="Loan amount" />
+            <label>Funded date <input name="funded_date" type="date" /></label>
+            <select name="attribution_method" required>
+              <option value="manual">Logged manually</option>
+              <option value="los_tag">LOS ARM tag</option>
+              <option value="co_branded_link">Co-branded link</option>
+              <option value="mmi_match">Model Match match</option>
+            </select>
+            <select name="relationship_origin">
+              <option value="existing">Existing realtor relationship</option>
+              <option value="new">New realtor relationship</option>
+            </select>
+            <button class="btn-gold" type="submit">Credit loan</button>
+            <p class="form-msg"></p>
+          </form>
+        </div>
+        <div class="card">
+          <h3>Deployments</h3>
+          <div class="table-wrap"><table id="deploy-table"></table></div>
+        </div>
+        <div class="card">
+          <h3>Credited loans</h3>
+          <div class="table-wrap"><table id="loans-table"></table></div>
+        </div>
+      </section>
+
+      <!-- Status -->
+      <section id="view-status" class="view hidden">
+        <div class="two-col">
+          <div class="card">
+            <h3>Model Match refresh</h3>
+            <div id="sync-state" class="list"></div>
+          </div>
+          <div class="card">
+            <h3>Realtor directory build</h3>
+            <div id="dir-state" class="list"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Recent refresh runs</h3>
+          <div class="table-wrap"><table id="runs-table"></table></div>
+        </div>
+        <div class="card">
+          <h3>Approved logins</h3>
+          <div id="admins" class="list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
