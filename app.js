@@ -295,11 +295,11 @@
       if (!data.length) { table.innerHTML = `<tr><td class="empty">No LOs match.</td></tr>`; $("#los-pager").innerHTML = ""; return; }
       table.innerHTML = `<thead><tr><th></th><th>Loan officer</th><th>Office</th><th>At WestCap since</th><th class="num">Loans (12 mo)</th><th>WestCap email</th><th>Cell</th><th class="num">Listed</th><th class="num">Likely</th><th>Alerts</th></tr></thead><tbody>` +
         data.map((r) => { const s = sm.get(r.nmls_id) || {}; return `<tr class="clickable lo-row" data-nmls="${esc(r.nmls_id)}" data-name="${esc(r.full_name)}">
-          <td class="chev" aria-label="Show realtors">›</td>
+          <td class="chev" aria-label="Show details"><span>›</span></td>
           <td>${esc(r.full_name)}<div class="muted">NMLS ${esc(r.nmls_id)}</div></td>
           <td class="muted">${esc([r.office_city, r.office_state].filter(Boolean).join(", ") || "—")}${r.branch_name ? `<div>${esc(r.branch_name)}</div>` : ""}</td>
           <td>${date(r.start_date)}</td><td class="num">${num(r.units_12m || 0)}</td>
-          <td>${r.email ? esc(r.email) : `<span class="muted">—</span>`}</td><td>${r.mobile_phone ? phone(r.mobile_phone) : `<span class="muted">—</span>`}</td>
+          <td>${r.email ? esc(r.email) : `<span class="muted">—</span>`}</td><td class="nowrap">${r.mobile_phone ? phone(r.mobile_phone) : `<span class="muted">—</span>`}</td>
           <td class="num">${num(s.listed_now || 0)}</td><td class="num">${num(s.likely_to_list || 0)}</td>
           <td><label class="toggle"><input type="checkbox" data-nmls="${esc(r.nmls_id)}" data-field="notify_email" ${r.notify_email ? "checked" : ""}/>Email</label>
               <label class="toggle"><input type="checkbox" data-nmls="${esc(r.nmls_id)}" data-field="notify_sms" ${r.notify_sms ? "checked" : ""}/>Text</label></td></tr>`; }).join("") + `</tbody>`;
@@ -323,6 +323,16 @@
     const d = document.createElement("tr");
     d.className = "lo-detail";
     d.innerHTML = `<td colspan="${cols}"><div class="lo-panel" data-nmls="${esc(tr.dataset.nmls)}">
+      <details class="lo-sec" open>
+        <summary><span class="badge listed">Listed now</span> Past borrowers with their home on the market <span class="sec-count lo-listed-count"></span></summary>
+        <div class="lo-listed"><div class="empty">Loading…</div></div>
+      </details>
+      <details class="lo-sec" open>
+        <summary><span class="badge likely">Likely to list</span> Past borrowers Model Match scores as likely to sell <span class="sec-count lo-likely-count"></span></summary>
+        <div class="lo-likely"><div class="empty">Loading…</div></div>
+      </details>
+      <details class="lo-sec" open>
+      <summary><span class="badge">Realtors</span> Realtors this LO has closed with <span class="sec-count lo-realtor-count"></span></summary>
       <div class="lo-panel-head">
         <div><strong>Realtors working with ${esc(tr.dataset.name)}</strong><div class="muted lo-status">Loading…</div></div>
         <div class="lo-panel-actions">
@@ -334,12 +344,37 @@
           <button class="btn-outline small lo-refresh">Refresh from Model Match</button>
         </div>
       </div>
-      <div class="lo-realtors"></div></div></td>`;
+      <div class="lo-realtors"></div>
+      </details></div></td>`;
     tr.after(d);
     const panel = $(".lo-panel", d);
     $(".lo-sort", panel).addEventListener("change", () => renderLoDetail(panel));
     $(".lo-refresh", panel).addEventListener("click", () => syncLoDetail(panel, true));
+    renderLoSignals(panel);
     renderLoDetail(panel).then(() => syncLoDetail(panel, false));
+  }
+
+  // The LO's past borrowers, split into Listed now and Likely to list.
+  async function renderLoSignals(panel) {
+    const nmls = panel.dataset.nmls;
+    const listedBox = $(".lo-listed", panel), likelyBox = $(".lo-likely", panel);
+    try {
+      const rows = await fetchAll(() => sb.from("arm_borrower_signals").select("*").eq("originator_nmls", nmls).eq("is_active", true));
+      const listed = rows.filter((r) => r.signal_type === "listed").sort((a, b) => String(b.listed_date || "").localeCompare(String(a.listed_date || "")));
+      const likely = rows.filter((r) => r.signal_type === "likely_to_list").sort((a, b) => Number(b.sale_propensity || 0) - Number(a.sale_propensity || 0));
+      $(".lo-listed-count", panel).textContent = num(listed.length);
+      $(".lo-likely-count", panel).textContent = num(likely.length);
+      listedBox.innerHTML = listed.length
+        ? `<table class="listings-mini"><thead><tr><th>Address</th><th class="num">List price</th><th>Listed</th><th>Original loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>
+          ${listed.map((r) => `<tr><td>${esc(r.address)}</td><td class="num">${money(r.list_price)}</td><td>${date(r.listed_date)}</td><td>${date(r.loan_date)}</td><td class="num">${money(r.loan_amount)}</td><td class="muted">${esc(r.lender || "—")}</td></tr>`).join("")}
+          </tbody></table>`
+        : `<div class="empty">None of this LO's past borrowers are listed right now.</div>`;
+      likelyBox.innerHTML = likely.length
+        ? `<table class="listings-mini"><thead><tr><th>Address</th><th class="num">Score</th><th>Original loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>
+          ${likely.map((r) => `<tr><td>${esc(r.address)}</td><td class="num">${num(r.sale_propensity)}</td><td>${date(r.loan_date)}</td><td class="num">${money(r.loan_amount)}</td><td class="muted">${esc(r.lender || "—")}</td></tr>`).join("")}
+          </tbody></table>`
+        : `<div class="empty">No past borrowers scored as likely to list right now.</div>`;
+    } catch (err) { fail(listedBox, err); likelyBox.innerHTML = ""; }
   }
 
   async function renderLoDetail(panel) {
@@ -357,6 +392,7 @@
       const key = { lo: (r) => Number(r.lo_total_volume || 0), v14: (r) => Number(r.volume_14m || 0), act: (r) => Number(r.active_listings_count || 0) }[sort];
       rows.sort((a, b) => key(b) - key(a));
       panel.dataset.count = rows.length;
+      $(".lo-realtor-count", panel).textContent = num(rows.length);
       if (!rows.length) { box.innerHTML = `<div class="empty">No realtor relationships on file yet.</div>`; return; }
       box.innerHTML = rows.map((r) => {
         const ls = listings.get(r.mmi_agent_id) || [];
@@ -371,7 +407,7 @@
             <div class="realtor-contact">${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : `<span class="muted">No email</span>`}<div>${phone(r.phone)}</div></div>
           </div>
           <div class="realtor-stats">
-            <div><span class="stat-l">With this LO (all time)</span><span class="stat-v">${num(r.lo_total_units)} loans · ${money(r.lo_total_volume)}</span><span class="muted">${esc(withLo)}</span></div>
+            <div><span class="stat-l">With this LO (all time)</span><span class="stat-v">${num(r.lo_total_units)} ${Number(r.lo_total_units) === 1 ? "loan" : "loans"} · ${money(r.lo_total_volume)}</span><span class="muted">${esc(withLo)}</span></div>
             <div><span class="stat-l">Realtor's volume (14 mo)</span><span class="stat-v">${has14 ? money(r.volume_14m) : "Loading…"}</span><span class="muted">${has14 ? `${num(r.units_14m || 0)} deals · buyer ${moneyShort(r.buyer_volume_14m)} · listing ${moneyShort(r.seller_volume_14m)}` : ""}</span></div>
             <div><span class="stat-l">Active listings</span><span class="stat-v">${r.listings_refreshed_at ? num(r.active_listings_count || 0) : "Loading…"}</span></div>
           </div>
