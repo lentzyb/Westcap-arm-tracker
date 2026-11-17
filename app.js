@@ -409,7 +409,7 @@
           <div class="realtor-stats">
             <div><span class="stat-l">With this LO (all time)</span><span class="stat-v">${num(r.lo_total_units)} ${Number(r.lo_total_units) === 1 ? "loan" : "loans"} · ${money(r.lo_total_volume)}</span><span class="muted">${esc(withLo)}</span></div>
             <div><span class="stat-l">Realtor's volume (14 mo)</span><span class="stat-v">${has14 ? money(r.volume_14m) : "Loading…"}</span><span class="muted">${has14 ? `${num(r.units_14m || 0)} deals · buyer ${moneyShort(r.buyer_volume_14m)} · listing ${moneyShort(r.seller_volume_14m)}` : ""}</span></div>
-            <div><span class="stat-l">Active listings</span><span class="stat-v">${r.listings_refreshed_at ? num(r.active_listings_count || 0) : "Loading…"}</span></div>
+            <div><span class="stat-l">Active listings</span><span class="stat-v">${r.listings_refreshed_at ? num(ls.length) : "Loading…"}</span></div>
           </div>
           ${ls.length ? `<table class="listings-mini"><thead><tr><th>Active listing</th><th>City</th><th class="num">List price</th><th>Listed</th></tr></thead><tbody>
             ${ls.map((l, i) => `<tr class="${i >= LISTINGS_PREVIEW ? "more hidden" : ""}"><td>${esc(l.address)}</td><td class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}</td><td class="num">${money(l.list_price)}</td><td>${date(l.list_date)}</td></tr>`).join("")}
