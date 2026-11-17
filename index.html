@@ -17,11 +17,13 @@
       <img src="assets/WestCapitalLending-HorizontalWhite.png" alt="West Capital Lending" class="login-logo" />
       <p class="eyebrow">Business Development</p>
       <h1>ARM <em>Tracker</em></h1>
-      <p class="muted-on-dark">Sign in with your WestCap email. We'll send you a one-time sign-in link.</p>
+      <p class="muted-on-dark">Sign in with your WestCap email and password.</p>
       <form id="login-form">
-        <input id="login-email" type="email" required placeholder="name@westcapitallending.com" autocomplete="email" />
-        <button type="submit" class="btn-gold">Send sign-in link</button>
+        <input id="login-email" type="email" required placeholder="name@westcapitallending.com" autocomplete="username" />
+        <input id="login-password" type="password" placeholder="Password" autocomplete="current-password" />
+        <button type="submit" class="btn-gold">Sign in</button>
       </form>
+      <button type="button" id="login-link" class="link-on-dark">First time, or forgot your password? Email me a sign-in link</button>
       <p id="login-msg" class="login-msg"></p>
     </div>
   </section>
@@ -56,11 +58,25 @@
       </nav>
       <div class="user">
         <span id="user-email"></span>
+        <button class="btn-ghost-dark small" data-action="password">Password</button>
         <button class="btn-ghost-dark small" data-action="signout">Sign out</button>
       </div>
     </header>
 
     <main class="main">
+      <form id="pw-card" class="pw-card hidden">
+        <div>
+          <strong id="pw-title">Set a password</strong>
+          <p class="muted" id="pw-sub">Set a password so you can sign in without an email link next time.</p>
+        </div>
+        <div class="pw-fields">
+          <input id="pw-new" type="password" placeholder="New password (10+ characters)" autocomplete="new-password" minlength="10" />
+          <input id="pw-confirm" type="password" placeholder="Confirm password" autocomplete="new-password" />
+          <button type="submit" class="btn-gold">Save password</button>
+          <button type="button" class="btn-outline" id="pw-later">Later</button>
+        </div>
+        <p class="form-msg" id="pw-msg"></p>
+      </form>
       <!-- Overview -->
       <section id="view-overview" class="view">
         <div class="status-row" id="status-pills"></div>

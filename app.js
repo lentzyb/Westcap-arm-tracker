@@ -67,20 +67,53 @@
     if (error || !ok) { $("#denied-email").textContent = email; $("#denied").classList.remove("hidden"); return; }
     $("#user-email").textContent = email;
     $("#app").classList.remove("hidden");
+    if (!session.user.user_metadata?.has_password) showPasswordCard(false);
     getRoster().catch(console.error);
     show(location.hash.replace("#", "") || "overview");
   }
 
   $("#login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
+    const email = $("#login-email").value.trim(), password = $("#login-password").value;
+    const msg = $("#login-msg");
+    if (!password) { msg.textContent = "Enter your password, or use the email link below if you haven't set one yet."; return; }
+    msg.textContent = "Signing in…";
+    const { error } = await sb.auth.signInWithPassword({ email, password });
+    msg.textContent = error ? "That email and password don't match. If you haven't set a password yet, use the email link below." : "";
+  });
+  $("#login-link").addEventListener("click", async () => {
     const email = $("#login-email").value.trim();
     const msg = $("#login-msg");
+    if (!email) { msg.textContent = "Enter your WestCap email first."; return; }
     msg.textContent = "Sending…";
-    const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
-    msg.textContent = error ? `Couldn't send the link: ${error.message}` : "Check your inbox for a sign-in link from Supabase.";
+    const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: location.origin + location.pathname } });
+    msg.textContent = error ? `Couldn't send the link: ${error.message}` : "Check your inbox for a sign-in link. Once you're in, you'll be asked to set a password.";
   });
+
+  // Set or change password.
+  function showPasswordCard(changing) {
+    $("#pw-title").textContent = changing ? "Change your password" : "Set a password";
+    $("#pw-sub").textContent = changing ? "Choose a new password for signing in." : "Set a password so you can sign in without an email link next time.";
+    $("#pw-msg").textContent = "";
+    $("#pw-card").classList.remove("hidden");
+  }
+  $("#pw-later").addEventListener("click", () => $("#pw-card").classList.add("hidden"));
+  $("#pw-card").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const p1 = $("#pw-new").value, p2 = $("#pw-confirm").value, msg = $("#pw-msg");
+    if (p1.length < 10) { msg.textContent = "Use at least 10 characters."; return; }
+    if (p1 !== p2) { msg.textContent = "The two passwords don't match."; return; }
+    msg.textContent = "Saving…";
+    const { error } = await sb.auth.updateUser({ password: p1, data: { has_password: true } });
+    if (error) { msg.textContent = `Couldn't save: ${error.message}`; return; }
+    $("#pw-new").value = ""; $("#pw-confirm").value = "";
+    $("#pw-card").classList.add("hidden");
+    toast("Password saved. Use it to sign in next time.");
+  });
+
   document.addEventListener("click", async (e) => {
     if (e.target.closest("[data-action='signout']")) { await sb.auth.signOut(); location.hash = ""; route(); }
+    if (e.target.closest("[data-action='password']")) showPasswordCard(true);
   });
   sb.auth.onAuthStateChange((evt) => { if (evt === "SIGNED_IN" || evt === "SIGNED_OUT") route(); });
 
