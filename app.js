@@ -191,7 +191,7 @@
     if (error) return fail(table, error);
     $("#realtors-meta").textContent = `${num(count)} realtors · click a row to see which LOs they work with`;
     if (!data.length) { table.innerHTML = `<tr><td class="empty">No realtors match.</td></tr>`; $("#realtors-pager").innerHTML = ""; return; }
-    table.innerHTML = `<thead><tr><th>Realtor</th><th>Brokerage</th><th>Email</th><th>Phone</th><th class="num">WestCap LOs</th><th class="num">Buyer-side loans</th><th class="num">Listing-side loans</th><th class="num">Volume (24 mo)</th></tr></thead><tbody>` +
+    table.innerHTML = `<thead><tr><th>Realtor</th><th>Brokerage</th><th>Email</th><th>Phone</th><th class="num">WestCap LOs</th><th class="num">Buyer-side loans</th><th class="num">Listing-side loans</th><th class="num">Volume with WestCap</th></tr></thead><tbody>` +
       data.map((r) => `<tr class="clickable" data-id="${esc(r.mmi_agent_id)}">
         <td>${esc(r.full_name)}</td><td class="muted">${esc(r.office_name || "—")}</td>
         <td>${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : "—"}</td>
@@ -213,7 +213,7 @@
     if (error) return fail(box, error);
     box.innerHTML = `<h3>${esc(r?.full_name)} <span class="muted" style="font-weight:400">· ${esc(r?.office_name || "")}</span></h3>
       <div class="list">${row("Email", r?.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : "—")}${row("Phone", phone(r?.phone))}</div>
-      <h3 style="margin-top:14px">WestCap LOs they've closed with (last 24 months)</h3>
+      <h3 style="margin-top:14px">WestCap LOs they've closed with</h3>
       <div class="table-wrap"><table><thead><tr><th>Loan officer</th><th>Side</th><th class="num">Loans</th><th class="num">Volume</th></tr></thead><tbody>
       ${rels.map((x) => `<tr><td>${esc(loName(x.originator_nmls))}<div class="muted">NMLS ${esc(x.originator_nmls)}</div></td><td>${x.side === "buyer" ? "Buyer's agent" : "Listing agent"}</td><td class="num">${num(x.units)}</td><td class="num">${money(x.volume)}</td></tr>`).join("")}
       </tbody></table></div>`;
@@ -224,7 +224,7 @@
     try {
       const rows = await fetchAll(() => realtorQuery(false), 50000);
       const cols = ["full_name", "office_name", "email", "phone", "westcap_los_worked_with", "buyer_side_loans_24m", "listing_side_loans_24m", "total_volume_24m"];
-      const head = ["Realtor", "Brokerage", "Email", "Phone", "WestCap LOs", "Buyer-side loans", "Listing-side loans", "Volume 24mo"];
+      const head = ["Realtor", "Brokerage", "Email", "Phone", "WestCap LOs", "Buyer-side loans", "Listing-side loans", "Volume with WestCap"];
       const csv = [head.join(","), ...rows.map((r) => cols.map((c) => `"${String(r[c] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
       const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: `westcap-realtors-${new Date().toISOString().slice(0, 10)}.csv` });
       a.click();
@@ -338,7 +338,7 @@
             <div class="realtor-contact">${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : `<span class="muted">No email</span>`}<div>${phone(r.phone)}</div></div>
           </div>
           <div class="realtor-stats">
-            <div><span class="stat-l">With this LO (24 mo)</span><span class="stat-v">${num(r.lo_total_units)} loans · ${money(r.lo_total_volume)}</span><span class="muted">${esc(withLo)}</span></div>
+            <div><span class="stat-l">With this LO (all time)</span><span class="stat-v">${num(r.lo_total_units)} loans · ${money(r.lo_total_volume)}</span><span class="muted">${esc(withLo)}</span></div>
             <div><span class="stat-l">Realtor's volume (14 mo)</span><span class="stat-v">${has14 ? money(r.volume_14m) : "Loading…"}</span><span class="muted">${has14 ? `${num(r.units_14m || 0)} deals · buyer ${moneyShort(r.buyer_volume_14m)} · listing ${moneyShort(r.seller_volume_14m)}` : ""}</span></div>
             <div><span class="stat-l">Active listings</span><span class="stat-v">${r.listings_refreshed_at ? num(r.active_listings_count || 0) : "Loading…"}</span></div>
           </div>
