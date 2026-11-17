@@ -111,6 +111,32 @@ tr.clickable:hover td { background: #FBF7EE; }
 .form-msg { font-size: 12px; min-height: 16px; margin: 0; color: var(--slate); }
 .toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--slate); margin-right: 10px; }
 
+/* LO detail */
+td.chev { width: 24px; color: var(--slate); font-size: 18px; transition: transform .15s; }
+tr.lo-row.open td { background: #FBF7EE; }
+tr.lo-row.open td.chev { transform: rotate(90deg); }
+tr.lo-detail > td { background: var(--off); padding: 0; }
+.lo-panel { padding: 16px 18px 20px; }
+.lo-panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.lo-panel-head strong { font-family: "Plus Jakarta Sans", sans-serif; font-size: 14px; }
+.lo-panel-actions { display: flex; gap: 8px; align-items: center; }
+.lo-panel-actions select { height: 30px; border: 1px solid var(--line); border-radius: 8px; padding: 0 8px; font-size: 12px; background: #fff; }
+.lo-status { font-size: 12px; margin-top: 2px; }
+.realtor-block { background: #fff; border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; margin-top: 8px; }
+.realtor-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.realtor-name { font-weight: 600; }
+.realtor-name .muted, .realtor-contact div { font-weight: 400; font-size: 12px; }
+.realtor-contact { text-align: right; font-size: 13px; }
+.realtor-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.realtor-stats > div { display: flex; flex-direction: column; font-size: 12px; }
+.stat-l { font-family: "IBM Plex Mono", monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--slate); }
+.stat-v { font-family: "Plus Jakarta Sans", sans-serif; font-weight: 700; font-size: 15px; margin: 2px 0; }
+.listings-mini { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.listings-mini th { background: var(--gold-soft); color: #6b4a0e; }
+.listings-mini td { padding: 6px 10px; font-size: 12px; }
+.show-more { font-size: 12px; margin-top: 6px; }
+@media (max-width: 720px) { .realtor-contact { text-align: left; } }
+
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--navy); color: #fff; padding: 10px 16px; border-radius: var(--radius); font-size: 13px; z-index: 50; }
 
 @media (max-width: 720px) {

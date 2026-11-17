@@ -260,8 +260,9 @@
       if (error) throw error;
       $("#los-meta").textContent = `${num(count)} loan officers`;
       if (!data.length) { table.innerHTML = `<tr><td class="empty">No LOs match.</td></tr>`; $("#los-pager").innerHTML = ""; return; }
-      table.innerHTML = `<thead><tr><th>Loan officer</th><th>Office</th><th>At WestCap since</th><th class="num">Loans (12 mo)</th><th>WestCap email</th><th>Cell</th><th class="num">Listed</th><th class="num">Likely</th><th>Alerts</th></tr></thead><tbody>` +
-        data.map((r) => { const s = sm.get(r.nmls_id) || {}; return `<tr>
+      table.innerHTML = `<thead><tr><th></th><th>Loan officer</th><th>Office</th><th>At WestCap since</th><th class="num">Loans (12 mo)</th><th>WestCap email</th><th>Cell</th><th class="num">Listed</th><th class="num">Likely</th><th>Alerts</th></tr></thead><tbody>` +
+        data.map((r) => { const s = sm.get(r.nmls_id) || {}; return `<tr class="clickable lo-row" data-nmls="${esc(r.nmls_id)}" data-name="${esc(r.full_name)}">
+          <td class="chev" aria-label="Show realtors">›</td>
           <td>${esc(r.full_name)}<div class="muted">NMLS ${esc(r.nmls_id)}</div></td>
           <td class="muted">${esc([r.office_city, r.office_state].filter(Boolean).join(", ") || "—")}${r.branch_name ? `<div>${esc(r.branch_name)}</div>` : ""}</td>
           <td>${date(r.start_date)}</td><td class="num">${num(r.units_12m || 0)}</td>
@@ -273,9 +274,106 @@
         const { error: e } = await sb.from("arm_loan_officers").update({ [cb.dataset.field]: cb.checked }).eq("nmls_id", cb.dataset.nmls);
         if (e) { cb.checked = !cb.checked; toast(`Couldn't save: ${e.message}`); } else toast("Alert setting saved");
       }));
+      $$("label.toggle", table).forEach((l) => l.addEventListener("click", (e) => e.stopPropagation()));
+      $$("tr.lo-row", table).forEach((tr) => tr.addEventListener("click", () => toggleLoDetail(tr)));
       pager($("#los-pager"), loPage, count, (p) => { loPage = p; loaders.los(); });
     } catch (err) { fail(table, err); }
   };
+
+  // ---------- LO detail: realtors, their 14-month volume, their active listings ----------
+  const LISTINGS_PREVIEW = 5;
+  function toggleLoDetail(tr) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains("lo-detail")) { next.remove(); tr.classList.remove("open"); return; }
+    tr.classList.add("open");
+    const cols = tr.children.length;
+    const d = document.createElement("tr");
+    d.className = "lo-detail";
+    d.innerHTML = `<td colspan="${cols}"><div class="lo-panel" data-nmls="${esc(tr.dataset.nmls)}">
+      <div class="lo-panel-head">
+        <div><strong>Realtors working with ${esc(tr.dataset.name)}</strong><div class="muted lo-status">Loading…</div></div>
+        <div class="lo-panel-actions">
+          <select class="lo-sort">
+            <option value="lo">Most volume with this LO</option>
+            <option value="v14">Most realtor volume (14 mo)</option>
+            <option value="act">Most active listings</option>
+          </select>
+          <button class="btn-outline small lo-refresh">Refresh from Model Match</button>
+        </div>
+      </div>
+      <div class="lo-realtors"></div></div></td>`;
+    tr.after(d);
+    const panel = $(".lo-panel", d);
+    $(".lo-sort", panel).addEventListener("change", () => renderLoDetail(panel));
+    $(".lo-refresh", panel).addEventListener("click", () => syncLoDetail(panel, true));
+    renderLoDetail(panel).then(() => syncLoDetail(panel, false));
+  }
+
+  async function renderLoDetail(panel) {
+    const nmls = panel.dataset.nmls, box = $(".lo-realtors", panel);
+    try {
+      const rows = await fetchAll(() => sb.from("arm_lo_realtor_detail").select("*").eq("originator_nmls", nmls));
+      const ids = rows.map((r) => r.mmi_agent_id);
+      const listings = new Map();
+      for (let i = 0; i < ids.length; i += 150) {
+        const { data, error } = await sb.from("arm_realtor_listings").select("*").in("mmi_agent_id", ids.slice(i, i + 150)).order("list_date", { ascending: false });
+        if (error) throw error;
+        data.forEach((l) => { if (!listings.has(l.mmi_agent_id)) listings.set(l.mmi_agent_id, []); listings.get(l.mmi_agent_id).push(l); });
+      }
+      const sort = $(".lo-sort", panel).value;
+      const key = { lo: (r) => Number(r.lo_total_volume || 0), v14: (r) => Number(r.volume_14m || 0), act: (r) => Number(r.active_listings_count || 0) }[sort];
+      rows.sort((a, b) => key(b) - key(a));
+      panel.dataset.count = rows.length;
+      if (!rows.length) { box.innerHTML = `<div class="empty">No realtor relationships on file yet.</div>`; return; }
+      box.innerHTML = rows.map((r) => {
+        const ls = listings.get(r.mmi_agent_id) || [];
+        const withLo = [
+          r.lo_buyer_units ? `${num(r.lo_buyer_units)} buyer-side` : "",
+          r.lo_listing_units ? `${num(r.lo_listing_units)} listing-side` : "",
+        ].filter(Boolean).join(" · ");
+        const has14 = r.stats_refreshed_at != null;
+        return `<div class="realtor-block">
+          <div class="realtor-top">
+            <div class="realtor-name">${esc(r.full_name)}<div class="muted">${esc(r.office_name || "Brokerage not on file")}</div></div>
+            <div class="realtor-contact">${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : `<span class="muted">No email</span>`}<div>${phone(r.phone)}</div></div>
+          </div>
+          <div class="realtor-stats">
+            <div><span class="stat-l">With this LO (24 mo)</span><span class="stat-v">${num(r.lo_total_units)} loans · ${money(r.lo_total_volume)}</span><span class="muted">${esc(withLo)}</span></div>
+            <div><span class="stat-l">Realtor's volume (14 mo)</span><span class="stat-v">${has14 ? money(r.volume_14m) : "Loading…"}</span><span class="muted">${has14 ? `${num(r.units_14m || 0)} deals · buyer ${moneyShort(r.buyer_volume_14m)} · listing ${moneyShort(r.seller_volume_14m)}` : ""}</span></div>
+            <div><span class="stat-l">Active listings</span><span class="stat-v">${r.listings_refreshed_at ? num(r.active_listings_count || 0) : "Loading…"}</span></div>
+          </div>
+          ${ls.length ? `<table class="listings-mini"><thead><tr><th>Active listing</th><th>City</th><th class="num">List price</th><th>Listed</th></tr></thead><tbody>
+            ${ls.map((l, i) => `<tr class="${i >= LISTINGS_PREVIEW ? "more hidden" : ""}"><td>${esc(l.address)}</td><td class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}</td><td class="num">${money(l.list_price)}</td><td>${date(l.list_date)}</td></tr>`).join("")}
+            </tbody></table>${ls.length > LISTINGS_PREVIEW ? `<button class="link show-more">Show all ${num(ls.length)} active listings</button>` : ""}` : ""}
+        </div>`;
+      }).join("");
+      $$(".show-more", box).forEach((b) => b.addEventListener("click", () => {
+        $$("tr.more", b.previousElementSibling).forEach((x) => x.classList.remove("hidden"));
+        b.remove();
+      }));
+    } catch (err) { fail(box, err); }
+  }
+
+  async function syncLoDetail(panel, force) {
+    const status = $(".lo-status", panel), btn = $(".lo-refresh", panel);
+    btn.disabled = true;
+    try {
+      for (let round = 0; round < 12; round++) {
+        status.textContent = round === 0 ? "Checking Model Match for updates…" : "Still pulling realtor data from Model Match…";
+        const { data, error } = await sb.functions.invoke("arm-lo-realtors", { body: { nmls: panel.dataset.nmls, refresh: force && round === 0 } });
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+        await renderLoDetail(panel);
+        const n = num(data.realtors ?? panel.dataset.count ?? 0);
+        if (data.paused) { status.textContent = `${n} realtors · update paused: ${data.paused}.`; return; }
+        if (data.complete) { status.textContent = `${n} realtors · up to date · Model Match balance ${num(data.balance)} credits`; return; }
+        if (!data.refreshed && !data.remaining) { status.textContent = `${n} realtors`; return; }
+      }
+      status.textContent = "Partially loaded. Click Refresh to continue.";
+    } catch (err) {
+      status.textContent = `Couldn't reach Model Match: ${err.message}`;
+    } finally { btn.disabled = false; }
+  }
 
   // ---------- ARMs ----------
   async function loadArmSelects() {
