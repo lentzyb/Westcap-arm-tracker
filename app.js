@@ -404,11 +404,8 @@
       <div class="lo-panel-head">
         <div><strong>Realtors working with ${esc(tr.dataset.name)}</strong><div class="muted lo-status">Loading…</div></div>
         <div class="lo-panel-actions">
-          <select class="lo-sort">
-            <option value="lo">Most volume with this LO</option>
-            <option value="v14">Most realtor volume (14 mo)</option>
-            <option value="act">Most active listings</option>
-          </select>
+          <div class="seg lo-period"><button data-v="14m" class="active">Last 14 months</button><button data-v="all">All time</button></div>
+          <div class="seg lo-side"><button data-v="buyer" class="active">Buyer side</button><button data-v="listing">Listing side</button><button data-v="both">Both</button></div>
           <button class="btn-outline small lo-refresh">Refresh from Model Match</button>
         </div>
       </div>
@@ -416,7 +413,10 @@
       </details></div></td>`;
     tr.after(d);
     const panel = $(".lo-panel", d);
-    $(".lo-sort", panel).addEventListener("change", () => renderLoDetail(panel));
+    $$(".seg", panel).forEach((g) => $$("button", g).forEach((b) => b.addEventListener("click", () => {
+      $$("button", g).forEach((x) => x.classList.toggle("active", x === b));
+      renderLoDetail(panel);
+    })));
     $(".lo-refresh", panel).addEventListener("click", () => syncLoDetail(panel, true));
     renderLoSignals(panel);
     renderLoDetail(panel).then(() => syncLoDetail(panel, false));
@@ -451,69 +451,146 @@
     } catch (err) { fail(listedBox, err); likelyBox.innerHTML = ""; }
   }
 
+  // ---------- Model Match-style relationship table ----------
+  // Same-name realtor profiles under one LO are merged (Model Match sometimes splits one agent in two).
+  const nameKey = (n) => String(n || "").toLowerCase().replace(/[^a-z]/g, "");
+  const initials = (n) => String(n || "").split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase() || "?";
+  const pct = (v) => (v == null || !isFinite(v) ? "—" : `${(v * 100).toFixed(1)}%`);
+  const sumN = (arr, f) => arr.reduce((t, x) => t + Number(f(x) || 0), 0);
+
+  function mergeRealtors(rows) {
+    const groups = new Map();
+    rows.forEach((r) => {
+      const k = nameKey(r.full_name) || r.mmi_agent_id;
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    });
+    return [...groups.values()].map((g) => {
+      const best = [...g].sort((a, b) => Number(!!b.email) - Number(!!a.email) || Number(b.volume_14m || 0) - Number(a.volume_14m || 0))[0];
+      return {
+        ids: g.map((r) => r.mmi_agent_id), profiles: g.length,
+        full_name: best.full_name, office_name: best.office_name || g.find((r) => r.office_name)?.office_name,
+        email: best.email || g.find((r) => r.email)?.email, phone: best.phone || g.find((r) => r.phone)?.phone,
+        all: { buyer: { u: sumN(g, (r) => r.lo_buyer_units), v: sumN(g, (r) => r.lo_buyer_volume) }, listing: { u: sumN(g, (r) => r.lo_listing_units), v: sumN(g, (r) => r.lo_listing_volume) } },
+        m14: { buyer: { u: sumN(g, (r) => r.lo14_buyer_units), v: sumN(g, (r) => r.lo14_buyer_volume) }, listing: { u: sumN(g, (r) => r.lo14_listing_units), v: sumN(g, (r) => r.lo14_listing_volume) } },
+        realtor14: { buyer: sumN(g, (r) => r.buyer_volume_14m), listing: sumN(g, (r) => r.seller_volume_14m), both: sumN(g, (r) => r.volume_14m), units: sumN(g, (r) => r.units_14m) },
+        hasStats: g.some((r) => r.stats_refreshed_at), listingsLoaded: g.every((r) => r.listings_refreshed_at),
+        active: sumN(g, (r) => r.active_listings_count),
+      };
+    });
+  }
+  function relStats(m, period, side) {
+    const src = period === "14m" ? m.m14 : m.all;
+    const u = side === "both" ? src.buyer.u + src.listing.u : src[side].u;
+    const v = side === "both" ? src.buyer.v + src.listing.v : src[side].v;
+    const denom = m.realtor14[side];
+    const share = period === "14m" && m.hasStats && denom > 0 ? Math.min(v / denom, 1) : null;
+    return { units: u, volume: v, avg: u ? v / u : null, share };
+  }
+
   async function renderLoDetail(panel) {
     const nmls = panel.dataset.nmls, box = $(".lo-realtors", panel);
+    const period = $(".lo-period .active", panel).dataset.v, side = $(".lo-side .active", panel).dataset.v;
     try {
       const rows = await fetchAll(() => sb.from("arm_lo_realtor_detail").select("*").eq("originator_nmls", nmls));
-      const ids = rows.map((r) => r.mmi_agent_id);
-      const listings = new Map();
-      for (let i = 0; i < ids.length; i += 150) {
-        const { data, error } = await sb.from("arm_realtor_listings").select("*").in("mmi_agent_id", ids.slice(i, i + 150)).order("list_date", { ascending: false });
-        if (error) throw error;
-        data.forEach((l) => { if (!listings.has(l.mmi_agent_id)) listings.set(l.mmi_agent_id, []); listings.get(l.mmi_agent_id).push(l); });
-      }
-      const sort = $(".lo-sort", panel).value;
-      const key = { lo: (r) => Number(r.lo_total_volume || 0), v14: (r) => Number(r.volume_14m || 0), act: (r) => Number(r.active_listings_count || 0) }[sort];
-      rows.sort((a, b) => key(b) - key(a));
-      panel.dataset.count = rows.length;
-      $(".lo-realtor-count", panel).textContent = num(rows.length);
-      if (!rows.length) { box.innerHTML = `<div class="empty">No realtor relationships on file yet.</div>`; return; }
-      box.innerHTML = rows.map((r) => {
-        const ls = listings.get(r.mmi_agent_id) || [];
-        const withLo = [
-          r.lo_buyer_units ? `${num(r.lo_buyer_units)} buyer-side` : "",
-          r.lo_listing_units ? `${num(r.lo_listing_units)} listing-side` : "",
-        ].filter(Boolean).join(" · ");
-        const has14 = r.stats_refreshed_at != null;
-        return `<div class="realtor-block">
-          <div class="realtor-top">
-            <div class="realtor-name">${esc(r.full_name)}<div class="muted">${esc(r.office_name || "Brokerage not on file")}</div></div>
-            <div class="realtor-contact">${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : `<span class="muted">No email</span>`}<div>${phone(r.phone)}</div></div>
-          </div>
-          <div class="realtor-stats">
-            <div><span class="stat-l">With this LO (all time)</span><span class="stat-v">${num(r.lo_total_units)} ${Number(r.lo_total_units) === 1 ? "loan" : "loans"} · ${money(r.lo_total_volume)}</span><span class="muted">${esc(withLo)}</span></div>
-            <div><span class="stat-l">Realtor's volume (14 mo)</span><span class="stat-v">${has14 ? money(r.volume_14m) : "Loading…"}</span><span class="muted">${has14 ? `${num(r.units_14m || 0)} deals · buyer ${moneyShort(r.buyer_volume_14m)} · listing ${moneyShort(r.seller_volume_14m)}` : ""}</span></div>
-            <div><span class="stat-l">Active listings</span><span class="stat-v">${r.listings_refreshed_at ? num(ls.length) : "Loading…"}</span></div>
-          </div>
-          <details class="pair-loans" data-agent="${esc(r.mmi_agent_id)}">
-            <summary>Loans closed together <span class="muted">(${num(r.lo_total_units)})</span></summary>
-            <div class="pair-loans-body"><div class="empty">Loading…</div></div>
-          </details>
-          ${ls.length ? `<table class="listings-mini"><thead><tr><th>Active listing</th><th>City</th><th class="num">List price</th><th>Listed</th></tr></thead><tbody>
-            ${ls.map((l, i) => `<tr class="${i >= LISTINGS_PREVIEW ? "more hidden" : ""}"><td>${esc(l.address)}</td><td class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}</td><td class="num">${money(l.list_price)}</td><td>${date(l.list_date)}</td></tr>`).join("")}
-            </tbody></table>${ls.length > LISTINGS_PREVIEW ? `<button class="link show-more">Show all ${num(ls.length)} active listings</button>` : ""}` : ""}
-        </div>`;
-      }).join("");
-      $$(".show-more", box).forEach((b) => b.addEventListener("click", () => {
-        $$("tr.more", b.previousElementSibling).forEach((x) => x.classList.remove("hidden"));
-        b.remove();
-      }));
-      $$("details.pair-loans", box).forEach((d) => d.addEventListener("toggle", () => { if (d.open && !d.dataset.loaded) loadPairLoans(nmls, d); }));
+      const merged = mergeRealtors(rows).map((m) => ({ ...m, s: relStats(m, period, side) })).filter((m) => m.s.units > 0);
+      merged.sort((a, b) => b.s.volume - a.s.volume || b.s.units - a.s.units);
+      panel._realtors = merged;
+      panel.dataset.count = merged.length;
+      $(".lo-realtor-count", panel).textContent = num(merged.length);
+      const totU = sumN(merged, (m) => m.s.units), totV = sumN(merged, (m) => m.s.volume);
+      const label = `${period === "14m" ? "last 14 months" : "all time"}, ${side === "both" ? "both sides" : side === "buyer" ? "buyer side" : "listing side"}`;
+      if (!merged.length) { box.innerHTML = `<div class="empty">No realtors on file for ${esc(label)}${period === "14m" && !rows.some((r) => r.lo14_buyer_units != null || r.lo14_listing_units != null) ? " yet. The 14-month numbers load from Model Match the first time an LO is opened" : ""}.</div>`; return; }
+      box.innerHTML = `<div class="rel-sum muted">${num(merged.length)} realtors · ${num(totU)} loans · ${money(totV)} · ${esc(label)}</div>
+        <div class="table-wrap"><table class="rel-table"><thead><tr><th>Name</th><th class="num">Volume</th><th class="num">Units</th><th class="num">Avg loan size</th><th class="num" title="Share of the realtor's own 14-month volume on this side that closed with this LO">Wallet share</th><th class="num">Active listings</th><th></th></tr></thead><tbody>
+        ${merged.map((m, i) => `<tr class="clickable rel-row" data-i="${i}">
+          <td><div class="rel-name"><span class="avatar">${esc(initials(m.full_name))}</span><div>${esc(m.full_name)}${m.profiles > 1 ? ` <span class="muted small" title="Model Match lists this realtor under ${m.profiles} profiles; they are combined here">· ${m.profiles} profiles merged</span>` : ""}<div class="muted">${esc(m.office_name || "Brokerage not on file")}</div></div></div></td>
+          <td class="num strong">${moneyShort(m.s.volume)}</td><td class="num">${num(m.s.units)}</td><td class="num">${m.s.avg ? moneyShort(m.s.avg) : "—"}</td>
+          <td class="num">${m.s.share != null ? `<span class="pill-share">${pct(m.s.share)}</span>` : `<span class="muted">${period === "14m" ? (m.hasStats ? "—" : "Loading…") : "14 mo only"}</span>`}</td>
+          <td class="num">${m.listingsLoaded ? num(m.active) : `<span class="muted">…</span>`}</td>
+          <td class="chev-r">›</td></tr>`).join("")}
+        </tbody></table></div>`;
+      $$("tr.rel-row", box).forEach((tr) => tr.addEventListener("click", () => openRelationship(panel, merged[Number(tr.dataset.i)], period, side)));
     } catch (err) { fail(box, err); }
   }
 
-  async function loadPairLoans(nmls, d) {
-    d.dataset.loaded = "1";
-    const body = $(".pair-loans-body", d), agent = d.dataset.agent;
-    const read = () => sb.from("arm_lo_realtor_loans").select("*").eq("originator_nmls", nmls).eq("mmi_agent_id", agent);
-    try {
-      const { data: pulled } = await sb.from("arm_lo_realtor_loan_pulls").select("pulled_at").eq("originator_nmls", nmls).eq("mmi_agent_id", agent).maybeSingle();
-      let note = "";
-      if (!pulled) { body.innerHTML = `<div class="empty">Pulling these loans from Model Match…</div>`; note = await pullPairLoans([nmls], [agent]); }
-      const { data, error } = await read();
+  // ---------- Relationship drawer: stats + every transaction between the LO and the realtor ----------
+  function drawer() {
+    let d = $("#rel-drawer");
+    if (!d) {
+      document.body.insertAdjacentHTML("beforeend", `<div id="rel-drawer" class="drawer hidden" role="dialog" aria-modal="true"><div class="drawer-back"></div><aside class="drawer-panel"><button class="drawer-x" aria-label="Close">×</button><div class="drawer-body"></div></aside></div>`);
+      d = $("#rel-drawer");
+      const close = () => d.classList.add("hidden");
+      $(".drawer-back", d).addEventListener("click", close);
+      $(".drawer-x", d).addEventListener("click", close);
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+    }
+    return d;
+  }
+  async function openRelationship(panel, m, period, side) {
+    const d = drawer(), body = $(".drawer-body", d), nmls = panel.dataset.nmls;
+    const loNm = loName(nmls);
+    d.classList.remove("hidden");
+    const draw = (loans, note, pulled) => {
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 14);
+      const roleOk = (r) => side === "both" || (side === "buyer" ? r === "buyer" : r === "listing" || r === "co-listing");
+      // One row per loan (a loan can match two merged profiles), newest first.
+      const seen = new Set();
+      const tx = (loans || []).filter((l) => roleOk(l.agent_role) && (period === "all" || (l.mortgage_date && new Date(l.mortgage_date) >= cutoff)))
+        .filter((l) => { const k = l.loan_id; if (seen.has(k)) return false; seen.add(k); return true; })
+        .sort((a, b) => String(b.mortgage_date || "").localeCompare(String(a.mortgage_date || "")));
+      body.innerHTML = `
+        <p class="eyebrow-dark">Relationship</p>
+        <h2 class="drawer-title">${esc(m.full_name)}</h2>
+        <div class="muted">${esc(m.office_name || "Brokerage not on file")}</div>
+        <div class="drawer-sub">Transactions with ${esc(loNm)}</div>
+        <div class="chips"><span class="chip">${period === "14m" ? "Last 14 months" : "All time"}</span><span class="chip">${side === "both" ? "Both sides" : side === "buyer" ? "Buyer side" : "Listing side"}</span>${m.profiles > 1 ? `<span class="chip">${m.profiles} Model Match profiles merged</span>` : ""}</div>
+        <div class="drawer-stats">
+          <div><span class="stat-l">Volume</span><span class="stat-v">${moneyShort(m.s.volume)}</span></div>
+          <div><span class="stat-l">Units</span><span class="stat-v">${num(m.s.units)}</span></div>
+          <div><span class="stat-l">Avg loan</span><span class="stat-v">${m.s.avg ? moneyShort(m.s.avg) : "—"}</span></div>
+          <div><span class="stat-l">Wallet share</span><span class="stat-v">${pct(m.s.share)}</span></div>
+        </div>
+        <div class="drawer-contact">${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : `<span class="muted">No email on file</span>`} · ${phone(m.phone)}
+          ${m.hasStats ? `<div class="muted">Realtor's own last 14 months: ${moneyShort(m.realtor14.both)} · ${num(m.realtor14.units)} deals · ${num(m.active)} active listings</div>` : ""}</div>
+        ${note ? `<div class="note small">${esc(note)}</div>` : ""}
+        <table class="tx-table"><thead><tr><th>Transaction date</th><th>Property</th><th>Loan type</th><th class="num">Loan amount</th></tr></thead><tbody>
+        ${loans == null ? `<tr><td colspan="4" class="empty">Loading transactions…</td></tr>`
+          : tx.length ? tx.map((l) => `<tr>
+            <td class="muted nowrap">${date(l.mortgage_date)}</td>
+            <td><strong>${esc(l.address || "—")}</strong><div class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}${l.zip ? " " + esc(l.zip) : ""}</div>
+              ${l.borrower_name ? `<div class="muted">Borrower: ${esc(l.borrower_name)}</div>` : ""}
+              ${l.sold_agent_name ? `<div class="muted">Buyer: ${esc(l.sold_agent_name)}</div>` : ""}${l.list_agent_name ? `<div class="muted">Listing: ${esc(l.list_agent_name)}</div>` : ""}
+              ${!l.sold_agent_name && !l.list_agent_name ? `<div class="muted">${esc(ROLE[l.agent_role] || "")}</div>` : ""}</td>
+            <td>${l.loan_type ? `<span class="tchip">${esc(l.loan_type.length <= 4 ? l.loan_type.toUpperCase() : cap(l.loan_type))}</span>` : ""}${l.transaction_type ? `<span class="tchip">${esc(TXN[l.transaction_type] || cap(l.transaction_type))}</span>` : ""}</td>
+            <td class="num strong">${moneyShort(l.mortgage_amount)}</td></tr>`).join("")
+          : `<tr><td colspan="4" class="empty">${pulled ? "No individual transactions on file for this window." : "Not loaded from Model Match yet."}</td></tr>`}
+        </tbody></table>
+        <div class="drawer-listings"></div>`;
+    };
+    draw(null, "", false);
+    const read = async () => {
+      const [{ data: loans, error }, { data: pulls }] = await Promise.all([
+        sb.from("arm_lo_realtor_loans").select("*").eq("originator_nmls", nmls).in("mmi_agent_id", m.ids),
+        sb.from("arm_lo_realtor_loan_pulls").select("mmi_agent_id").eq("originator_nmls", nmls).in("mmi_agent_id", m.ids),
+      ]);
       if (error) throw error;
-      body.innerHTML = (note ? `<div class="note small">${esc(note)}</div>` : "") + loansTable(data, { pulled: !note });
-    } catch (err) { delete d.dataset.loaded; fail(body, err); }
+      return { loans, pulledAll: (pulls || []).length >= m.ids.length };
+    };
+    try {
+      let { loans, pulledAll } = await read();
+      let note = "";
+      if (!pulledAll) {
+        draw(loans, "Pulling these transactions from Model Match…", false);
+        note = await pullPairLoans([nmls], m.ids);
+        ({ loans, pulledAll } = await read());
+      }
+      draw(loans, note, pulledAll);
+      // The realtor's active listings, under the transactions.
+      const { data: ls } = await sb.from("arm_realtor_listings").select("*").in("mmi_agent_id", m.ids).order("list_date", { ascending: false });
+      if (ls?.length) $(".drawer-listings", body).innerHTML = `<h3>Active listings (${num(ls.length)})</h3><table class="tx-table"><tbody>
+        ${ls.map((l) => `<tr><td class="muted nowrap">${date(l.list_date)}</td><td><strong>${esc(l.address)}</strong><div class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}</div></td><td class="num strong">${moneyShort(l.list_price)}</td></tr>`).join("")}</tbody></table>`;
+    } catch (err) { draw([], `Couldn't load transactions: ${err.message}`, false); }
   }
 
   async function syncLoDetail(panel, force) {
