@@ -167,6 +167,41 @@
     } catch (err) { fail($("#top-los"), err); }
   };
 
+  // ---------- borrower names + LO/realtor loans (Model Match, on demand) ----------
+  const borrower = (r) => r.borrower_name ? esc(r.borrower_name) : `<span class="muted">${r.borrower_checked_at ? "Not on record" : "Not loaded yet"}</span>`;
+  const ROLE = { buyer: "Buyer's agent", listing: "Listing agent", "co-listing": "Co-listing agent" };
+  const TXN = { purchase: "Purchase", refinance: "Refinance", equity: "Equity", construction: "Construction", reo: "REO" };
+  const cap = (v) => (v ? String(v).charAt(0).toUpperCase() + String(v).slice(1) : "—");
+  function loansTable(loans, { showLo = false, pulled = true } = {}) {
+    if (!loans.length) return `<div class="empty">${pulled ? "Model Match has no individual loans on file for this pair." : "Not loaded from Model Match yet."}</div>`;
+    const sorted = [...loans].sort((a, b) => String(b.mortgage_date || "").localeCompare(String(a.mortgage_date || "")));
+    return `<table class="listings-mini loans-mini"><thead><tr>${showLo ? "<th>Loan officer</th>" : ""}<th>Borrower</th><th>Property</th><th>Realtor's side</th><th>Closed</th><th class="num">Loan amount</th><th class="num">Sale price</th><th>Type</th></tr></thead><tbody>
+      ${sorted.map((l) => `<tr>${showLo ? `<td>${esc(loName(l.originator_nmls))}</td>` : ""}<td>${l.borrower_name ? esc(l.borrower_name) : `<span class="muted">Not on record</span>`}</td>
+        <td>${esc(l.address || "—")}<div class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}</div></td>
+        <td>${esc(ROLE[l.agent_role] || "—")}</td><td>${date(l.mortgage_date)}</td><td class="num">${money(l.mortgage_amount)}</td>
+        <td class="num">${l.sale_price ? money(l.sale_price) : "—"}</td><td class="muted">${esc([TXN[l.transaction_type] || cap(l.transaction_type), l.loan_type ? (l.loan_type.length <= 4 ? l.loan_type.toUpperCase() : cap(l.loan_type)) : ""].filter(Boolean).join(" · "))}</td></tr>`).join("")}
+      </tbody></table>`;
+  }
+  // Ask the server to pull any missing loans for these LO + realtor pairs. Returns a short status note.
+  async function pullPairLoans(nmlsList, agentIds) {
+    for (let round = 0; round < 6; round++) {
+      const { data, error } = await sb.functions.invoke("arm-details", { body: { action: "pair_loans", nmls: nmlsList, agent_ids: agentIds } });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      if (data.paused) return `Some loans aren't loaded yet: ${data.paused}.`;
+      if (data.complete) return data.failed ? `${num(data.failed)} couldn't be loaded from Model Match.` : "";
+    }
+    return "Partially loaded. Open it again to load the rest.";
+  }
+  // Fill borrower names for one LO's listed / likely homes. Returns a short status note.
+  async function pullBorrowerNames(nmls) {
+    const { data, error } = await sb.functions.invoke("arm-details", { body: { action: "borrower_names", nmls, limit: 1000 } });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    if (data.paused) return `Borrower names load once Model Match credits are back above the floor (${data.paused}).`;
+    return "";
+  }
+
   // ---------- listings ----------
   let lScope = "current", lPage = 0;
   $$("#listing-scope button").forEach((b) => b.addEventListener("click", () => {
@@ -186,15 +221,16 @@
     let query = sb.from(view).select("*", { count: "exact" });
     if (type) query = query.eq("signal_type", type);
     if (st) query = query.ilike("address", `%, ${st}, %`);
-    if (q) query = query.or(`originator_name.ilike.%${q.replace(/[,()]/g, " ")}%,address.ilike.%${q.replace(/[,()]/g, " ")}%`);
+    if (q) query = query.or(`originator_name.ilike.%${q.replace(/[,()]/g, " ")}%,address.ilike.%${q.replace(/[,()]/g, " ")}%,borrower_name.ilike.%${q.replace(/[,()]/g, " ")}%`);
     query = type === "likely_to_list" ? query.order("sale_propensity", { ascending: false }) : query.order("listed_date", { ascending: false, nullsFirst: false });
     const { data, count, error } = await query.range(lPage * PAGE, lPage * PAGE + PAGE - 1);
     if (error) return fail(table, error);
     $("#listings-meta").textContent = `${num(count)} ${lScope === "former" ? "former-LO " : ""}past borrowers`;
     if (!data.length) { table.innerHTML = `<tr><td class="empty">Nothing matches these filters.</td></tr>`; $("#listings-pager").innerHTML = ""; return; }
-    table.innerHTML = `<thead><tr><th>Signal</th><th>Address</th><th>Loan officer</th><th class="num">List price</th><th>Listed</th><th class="num">Score</th><th>Loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>` +
+    table.innerHTML = `<thead><tr><th>Signal</th><th>Borrower</th><th>Address</th><th>Loan officer</th><th class="num">List price</th><th>Listed</th><th class="num">Score</th><th>Loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>` +
       data.map((r) => `<tr>
         <td><span class="badge ${r.signal_type === "listed" ? "listed" : "likely"}">${r.signal_type === "listed" ? "Listed" : "Likely to list"}</span></td>
+        <td>${borrower(r)}</td>
         <td>${esc(r.address)}</td>
         <td>${esc(r.lo_full_name || r.originator_name)}<div class="muted">NMLS ${esc(r.originator_nmls)}</div></td>
         <td class="num">${r.list_price ? money(r.list_price) : "—"}</td>
@@ -247,10 +283,42 @@
     box.innerHTML = `<h3>${esc(r?.full_name)} <span class="muted" style="font-weight:400">· ${esc(r?.office_name || "")}</span></h3>
       <div class="list">${row("Email", r?.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : "—")}${row("Phone", phone(r?.phone))}</div>
       <h3 style="margin-top:14px">WestCap LOs they've closed with</h3>
-      <div class="table-wrap"><table><thead><tr><th>Loan officer</th><th>Side</th><th class="num">Loans</th><th class="num">Volume</th></tr></thead><tbody>
-      ${rels.map((x) => `<tr><td>${esc(loName(x.originator_nmls))}<div class="muted">NMLS ${esc(x.originator_nmls)}</div></td><td>${x.side === "buyer" ? "Buyer's agent" : "Listing agent"}</td><td class="num">${num(x.units)}</td><td class="num">${money(x.volume)}</td></tr>`).join("")}
-      </tbody></table></div>`;
+      <div class="muted realtor-loans-status">Loading the homes closed with each LO…</div>
+      <div class="realtor-los"></div>`;
     box.scrollIntoView({ behavior: "smooth", block: "start" });
+
+    // One block per LO: loans and volume together, then the homes they closed.
+    const byLo = new Map();
+    rels.forEach((x) => {
+      const g = byLo.get(x.originator_nmls) || { nmls: x.originator_nmls, units: 0, volume: 0, sides: [] };
+      g.units += Number(x.units || 0); g.volume += Number(x.volume || 0);
+      g.sides.push(`${num(x.units)} ${x.side === "buyer" ? "buyer-side" : "listing-side"}`);
+      byLo.set(x.originator_nmls, g);
+    });
+    const los = [...byLo.values()].sort((a, b) => b.volume - a.volume);
+    const status = $(".realtor-loans-status", box), list = $(".realtor-los", box);
+    const draw = async () => {
+      const [{ data: loans, error: e }, { data: pulls }] = await Promise.all([
+        sb.from("arm_lo_realtor_loans").select("*").eq("mmi_agent_id", id),
+        sb.from("arm_lo_realtor_loan_pulls").select("originator_nmls").eq("mmi_agent_id", id),
+      ]);
+      if (e) throw e;
+      const pulledSet = new Set((pulls || []).map((p) => p.originator_nmls));
+      list.innerHTML = los.map((g) => {
+        const mine = loans.filter((l) => l.originator_nmls === g.nmls);
+        return `<div class="realtor-block">
+          <div class="realtor-top"><div class="realtor-name">${esc(loName(g.nmls))}<div class="muted">NMLS ${esc(g.nmls)}</div></div>
+          <div class="realtor-contact"><strong>${num(g.units)} ${g.units === 1 ? "loan" : "loans"} · ${money(g.volume)}</strong><div class="muted">${esc(g.sides.join(" · "))}</div></div></div>
+          ${loansTable(mine, { pulled: pulledSet.has(g.nmls) })}</div>`;
+      }).join("") || `<div class="empty">No WestCap LO relationships on file.</div>`;
+    };
+    try {
+      if (!los.length) { status.textContent = ""; return draw(); }
+      await draw();
+      const note = await pullPairLoans(los.map((g) => g.nmls), [id]);
+      await draw();
+      status.textContent = note || `${num(los.length)} ${los.length === 1 ? "LO" : "LOs"} · homes closed from Model Match public records`;
+    } catch (err) { status.textContent = `Couldn't load the homes: ${err.message}`; }
   }
   $("#r-export").addEventListener("click", async () => {
     toast("Building the export…");
@@ -355,7 +423,7 @@
   }
 
   // The LO's past borrowers, split into Listed now and Likely to list.
-  async function renderLoSignals(panel) {
+  async function renderLoSignals(panel, fetchNames = true) {
     const nmls = panel.dataset.nmls;
     const listedBox = $(".lo-listed", panel), likelyBox = $(".lo-likely", panel);
     try {
@@ -365,15 +433,21 @@
       $(".lo-listed-count", panel).textContent = num(listed.length);
       $(".lo-likely-count", panel).textContent = num(likely.length);
       listedBox.innerHTML = listed.length
-        ? `<table class="listings-mini"><thead><tr><th>Address</th><th class="num">List price</th><th>Listed</th><th>Original loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>
-          ${listed.map((r) => `<tr><td>${esc(r.address)}</td><td class="num">${money(r.list_price)}</td><td>${date(r.listed_date)}</td><td>${date(r.loan_date)}</td><td class="num">${money(r.loan_amount)}</td><td class="muted">${esc(r.lender || "—")}</td></tr>`).join("")}
+        ? `<table class="listings-mini"><thead><tr><th>Borrower</th><th>Address</th><th class="num">List price</th><th>Listed</th><th>Original loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>
+          ${listed.map((r) => `<tr><td>${borrower(r)}</td><td>${esc(r.address)}</td><td class="num">${money(r.list_price)}</td><td>${date(r.listed_date)}</td><td>${date(r.loan_date)}</td><td class="num">${money(r.loan_amount)}</td><td class="muted">${esc(r.lender || "—")}</td></tr>`).join("")}
           </tbody></table>`
         : `<div class="empty">None of this LO's past borrowers are listed right now.</div>`;
       likelyBox.innerHTML = likely.length
-        ? `<table class="listings-mini"><thead><tr><th>Address</th><th class="num">Score</th><th>Original loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>
-          ${likely.map((r) => `<tr><td>${esc(r.address)}</td><td class="num">${num(r.sale_propensity)}</td><td>${date(r.loan_date)}</td><td class="num">${money(r.loan_amount)}</td><td class="muted">${esc(r.lender || "—")}</td></tr>`).join("")}
+        ? `<table class="listings-mini"><thead><tr><th>Borrower</th><th>Address</th><th class="num">Score</th><th>Original loan</th><th class="num">Loan amount</th><th>Lender</th></tr></thead><tbody>
+          ${likely.map((r) => `<tr><td>${borrower(r)}</td><td>${esc(r.address)}</td><td class="num">${num(r.sale_propensity)}</td><td>${date(r.loan_date)}</td><td class="num">${money(r.loan_amount)}</td><td class="muted">${esc(r.lender || "—")}</td></tr>`).join("")}
           </tbody></table>`
         : `<div class="empty">No past borrowers scored as likely to list right now.</div>`;
+      // Borrower names come from Model Match the first time an LO is opened, then stay saved.
+      if (fetchNames && rows.some((r) => !r.borrower_checked_at)) {
+        const note = await pullBorrowerNames(nmls).catch((e) => `Couldn't load borrower names: ${e.message}`);
+        if (note) { listedBox.insertAdjacentHTML("afterbegin", `<div class="note small">${esc(note)}</div>`); return; }
+        return renderLoSignals(panel, false);
+      }
     } catch (err) { fail(listedBox, err); likelyBox.innerHTML = ""; }
   }
 
@@ -411,6 +485,10 @@
             <div><span class="stat-l">Realtor's volume (14 mo)</span><span class="stat-v">${has14 ? money(r.volume_14m) : "Loading…"}</span><span class="muted">${has14 ? `${num(r.units_14m || 0)} deals · buyer ${moneyShort(r.buyer_volume_14m)} · listing ${moneyShort(r.seller_volume_14m)}` : ""}</span></div>
             <div><span class="stat-l">Active listings</span><span class="stat-v">${r.listings_refreshed_at ? num(ls.length) : "Loading…"}</span></div>
           </div>
+          <details class="pair-loans" data-agent="${esc(r.mmi_agent_id)}">
+            <summary>Loans closed together <span class="muted">(${num(r.lo_total_units)})</span></summary>
+            <div class="pair-loans-body"><div class="empty">Loading…</div></div>
+          </details>
           ${ls.length ? `<table class="listings-mini"><thead><tr><th>Active listing</th><th>City</th><th class="num">List price</th><th>Listed</th></tr></thead><tbody>
             ${ls.map((l, i) => `<tr class="${i >= LISTINGS_PREVIEW ? "more hidden" : ""}"><td>${esc(l.address)}</td><td class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}</td><td class="num">${money(l.list_price)}</td><td>${date(l.list_date)}</td></tr>`).join("")}
             </tbody></table>${ls.length > LISTINGS_PREVIEW ? `<button class="link show-more">Show all ${num(ls.length)} active listings</button>` : ""}` : ""}
@@ -420,7 +498,22 @@
         $$("tr.more", b.previousElementSibling).forEach((x) => x.classList.remove("hidden"));
         b.remove();
       }));
+      $$("details.pair-loans", box).forEach((d) => d.addEventListener("toggle", () => { if (d.open && !d.dataset.loaded) loadPairLoans(nmls, d); }));
     } catch (err) { fail(box, err); }
+  }
+
+  async function loadPairLoans(nmls, d) {
+    d.dataset.loaded = "1";
+    const body = $(".pair-loans-body", d), agent = d.dataset.agent;
+    const read = () => sb.from("arm_lo_realtor_loans").select("*").eq("originator_nmls", nmls).eq("mmi_agent_id", agent);
+    try {
+      const { data: pulled } = await sb.from("arm_lo_realtor_loan_pulls").select("pulled_at").eq("originator_nmls", nmls).eq("mmi_agent_id", agent).maybeSingle();
+      let note = "";
+      if (!pulled) { body.innerHTML = `<div class="empty">Pulling these loans from Model Match…</div>`; note = await pullPairLoans([nmls], [agent]); }
+      const { data, error } = await read();
+      if (error) throw error;
+      body.innerHTML = (note ? `<div class="note small">${esc(note)}</div>` : "") + loansTable(data, { pulled: !note });
+    } catch (err) { delete d.dataset.loaded; fail(body, err); }
   }
 
   async function syncLoDetail(panel, force) {

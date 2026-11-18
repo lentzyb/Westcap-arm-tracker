@@ -168,3 +168,11 @@ tr.lo-detail > td { background: var(--off); padding: 0; }
   .two-col, .three-col { grid-template-columns: 1fr; }
   #f-search, #r-search, #lo-search { min-width: 100%; }
 }
+
+/* Loans closed between an LO and a realtor */
+.pair-loans { margin-top: 10px; }
+.pair-loans > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--navy); }
+.pair-loans .listings-mini { margin-top: 6px; }
+.loans-mini th { background: #eef1f7; color: var(--navy); }
+.note.small { font-size: 12px; padding: 8px 10px; margin: 0 0 8px; }
+.realtor-los .realtor-block .listings-mini, .realtor-los .realtor-block .empty { margin-top: 8px; }
