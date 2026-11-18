@@ -1,5 +1,5 @@
 /* WestCap ARM Tracker — single-page app on Supabase.
-   Every query runs as the signed-in user; row-level security only returns data to approved admins. */
+   Every query runs as the signed-in user. Row-level security returns everything to admins and, to an ARM, only the LOs they're deployed to. */
 (() => {
   const { supabaseUrl, supabaseKey } = window.ARM_CONFIG;
   const sb = window.supabase.createClient(supabaseUrl, supabaseKey, { auth: { persistSession: true, detectSessionInUrl: true } });
@@ -58,14 +58,30 @@
   const parseId = (v) => (String(v || "").match(/\(([^)]+)\)\s*$/) || [])[1] || (/^\d+$/.test(String(v).trim()) ? String(v).trim() : null);
 
   // ---------- auth ----------
+  // me: { role: "admin" | "arm", name, first, email, arm_id?, los? }
+  let me = null;
+  const isAdmin = () => me?.role === "admin";
+  const firstName = (name, email) => {
+    const n = String(name || "").trim().split(/\s+/)[0];
+    if (n) return n;
+    const local = String(email || "").split("@")[0].replace(/[^a-z]/gi, " ").trim().split(/\s+/)[0] || "there";
+    return local.charAt(0).toUpperCase() + local.slice(1);
+  };
+  const greeting = () => { const h = new Date().getHours(); return h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening"; };
   async function route() {
     const { data: { session } } = await sb.auth.getSession();
     ["#login", "#denied", "#app"].forEach((s) => $(s).classList.add("hidden"));
     if (!session) { $("#login").classList.remove("hidden"); return; }
     const email = session.user.email;
-    const { data: ok, error } = await sb.rpc("is_arm_admin");
-    if (error || !ok) { $("#denied-email").textContent = email; $("#denied").classList.remove("hidden"); return; }
-    $("#user-email").textContent = email;
+    const { data: who, error } = await sb.rpc("arm_whoami");
+    if (error || !who?.role) { $("#denied-email").textContent = email; $("#denied").classList.remove("hidden"); return; }
+    me = { ...who, first: firstName(who.name, email) };
+    document.body.classList.toggle("role-arm", me.role === "arm");
+    document.body.classList.toggle("role-admin", me.role === "admin");
+    $("#user-email").textContent = `Hello, ${me.first}`;
+    $("#user-email").title = email;
+    $("#tab-arms").textContent = me.role === "arm" ? "My stats" : "ARMs";
+    if (me.role === "arm") { lScope = "current"; }
     $("#app").classList.remove("hidden");
     if (!session.user.user_metadata?.has_password) showPasswordCard(false);
     getRoster().catch(console.error);
@@ -120,7 +136,7 @@
   // ---------- navigation ----------
   const loaders = {};
   function show(view) {
-    if (!loaders[view]) view = "overview";
+    if (!loaders[view] || (view === "status" && !isAdmin())) view = "overview";
     $$("#tabs button").forEach((b) => b.classList.toggle("active", b.dataset.view === view));
     $$(".view").forEach((v) => v.classList.add("hidden"));
     $(`#view-${view}`).classList.remove("hidden");
@@ -131,6 +147,9 @@
 
   // ---------- overview ----------
   loaders.overview = async () => {
+    $("#hello").textContent = `${greeting()}, ${me.first}.`;
+    $("#hello-sub").textContent = isAdmin() ? "Here's where every LO, realtor and ARM stands." : "Here's how your LOs and realtor relationships are doing.";
+    if (!isAdmin()) return armOverview();
     const { data: o, error } = await sb.rpc("arm_overview");
     if (error) return fail($("#kpi-current"), error);
     const dirPct = o.dir_total ? Math.round((o.dir_done / o.dir_total) * 100) : 0;
@@ -200,6 +219,28 @@
     if (data?.error) throw new Error(data.error);
     if (data.paused) return `Borrower names load once Model Match credits are back above the floor (${data.paused}).`;
     return "";
+  }
+
+  // ARM home: their own numbers and their LOs.
+  async function armOverview() {
+    try {
+      await getRoster();
+      const [{ data: cv }, sm] = await Promise.all([sb.from("arm_captured_volume").select("*"), getSignalMap()]);
+      const v = (cv || [])[0] || {};
+      const los = (me.los || []).map(String);
+      const sig = los.map((n) => sm.get(n) || { originator_nmls: n, listed_now: 0, likely_to_list: 0 });
+      const listed = sumN(sig, (s) => s.listed_now), likely = sumN(sig, (s) => s.likely_to_list);
+      $("#arm-home-kpis").innerHTML =
+        kpi("Captured volume", moneyShort(v.captured_volume || 0), `${num(v.funded_loans || 0)} funded loans credited to you`) +
+        kpi("Your variable comp", money(v.arm_variable_comp || 0), "From credited loans") +
+        kpi("LOs you support", num(los.length)) +
+        kpi("Past borrowers listed now", num(listed), `${num(likely)} more likely to list`);
+      $("#arm-home-los").innerHTML = los.length
+        ? sig.sort((a, b) => (b.listed_now + b.likely_to_list) - (a.listed_now + a.likely_to_list))
+            .map((s) => row(`<a href="#los" class="lo-jump" data-nmls="${esc(s.originator_nmls)}">${esc(loName(s.originator_nmls))}</a>`, `${num(s.listed_now)} listed · ${num(s.likely_to_list)} likely`)).join("")
+        : `<div class="empty">You haven't been deployed to any LOs yet. Your admin will add them.</div>`;
+      $$(".lo-jump", $("#arm-home-los")).forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); $("#lo-search").value = a.dataset.nmls; show("los"); }));
+    } catch (err) { fail($("#arm-home-kpis"), err); }
   }
 
   // ---------- listings ----------
@@ -361,7 +402,7 @@
       if (error) throw error;
       $("#los-meta").textContent = `${num(count)} loan officers`;
       if (!data.length) { table.innerHTML = `<tr><td class="empty">No LOs match.</td></tr>`; $("#los-pager").innerHTML = ""; return; }
-      table.innerHTML = `<thead><tr><th></th><th>Loan officer</th><th>Office</th><th>At WestCap since</th><th class="num">Loans (12 mo)</th><th>WestCap email</th><th>Cell</th><th class="num">Listed</th><th class="num">Likely</th><th>Alerts</th></tr></thead><tbody>` +
+      table.innerHTML = `<thead><tr><th></th><th>Loan officer</th><th>Office</th><th>At WestCap since</th><th class="num">Loans (12 mo)</th><th>WestCap email</th><th>Cell</th><th class="num">Listed</th><th class="num">Likely</th>${isAdmin() ? "<th>Alerts</th>" : ""}</tr></thead><tbody>` +
         data.map((r) => { const s = sm.get(r.nmls_id) || {}; return `<tr class="clickable lo-row" data-nmls="${esc(r.nmls_id)}" data-name="${esc(r.full_name)}">
           <td class="chev" aria-label="Show details"><span>›</span></td>
           <td>${esc(r.full_name)}<div class="muted">NMLS ${esc(r.nmls_id)}</div></td>
@@ -369,8 +410,8 @@
           <td>${date(r.start_date)}</td><td class="num">${num(r.units_12m || 0)}</td>
           <td>${r.email ? esc(r.email) : `<span class="muted">—</span>`}</td><td class="nowrap">${r.mobile_phone ? phone(r.mobile_phone) : `<span class="muted">—</span>`}</td>
           <td class="num">${num(s.listed_now || 0)}</td><td class="num">${num(s.likely_to_list || 0)}</td>
-          <td><label class="toggle"><input type="checkbox" data-nmls="${esc(r.nmls_id)}" data-field="notify_email" ${r.notify_email ? "checked" : ""}/>Email</label>
-              <label class="toggle"><input type="checkbox" data-nmls="${esc(r.nmls_id)}" data-field="notify_sms" ${r.notify_sms ? "checked" : ""}/>Text</label></td></tr>`; }).join("") + `</tbody>`;
+          ${isAdmin() ? `<td><label class="toggle"><input type="checkbox" data-nmls="${esc(r.nmls_id)}" data-field="notify_email" ${r.notify_email ? "checked" : ""}/>Email</label>
+              <label class="toggle"><input type="checkbox" data-nmls="${esc(r.nmls_id)}" data-field="notify_sms" ${r.notify_sms ? "checked" : ""}/>Text</label></td>` : ""}</tr>`; }).join("") + `</tbody>`;
       $$("input[data-field]", table).forEach((cb) => cb.addEventListener("change", async () => {
         const { error: e } = await sb.from("arm_loan_officers").update({ [cb.dataset.field]: cb.checked }).eq("nmls_id", cb.dataset.nmls);
         if (e) { cb.checked = !cb.checked; toast(`Couldn't save: ${e.message}`); } else toast("Alert setting saved");
@@ -622,7 +663,11 @@
   }
   loaders.arms = async () => {
     await getRoster();
-    loadArmSelects();
+    if (isAdmin()) loadArmSelects();
+    const head = (id, adminText, armText) => { const h = $(id).closest(".card")?.querySelector("h3"); if (h) h.textContent = isAdmin() ? adminText : armText; };
+    head("#arm-volume-table", "Captured volume by ARM", "Your captured volume");
+    head("#deploy-table", "Deployments", "Your LOs");
+    head("#loans-table", "Credited loans", "Loans credited to you");
     const [{ data: vol, error: e1 }, { data: deps, error: e2 }, { data: loans, error: e3 }] = await Promise.all([
       sb.from("arm_captured_volume").select("*").order("captured_volume", { ascending: false }),
       sb.from("arm_deployments").select("*, arm_arms(full_name)").order("start_date", { ascending: false }),
@@ -630,11 +675,12 @@
     ]);
     if (e1) return fail($("#arm-volume-table"), e1);
     const tot = (vol || []).reduce((a, v) => ({ loans: a.loans + Number(v.funded_loans), vol: a.vol + Number(v.captured_volume), comp: a.comp + Number(v.arm_variable_comp) }), { loans: 0, vol: 0, comp: 0 });
-    $("#arm-kpis").innerHTML = kpi("ARMs", num((vol || []).length)) + kpi("Credited loans", num(tot.loans)) + kpi("Captured volume", moneyShort(tot.vol)) + kpi("ARM variable comp", money(tot.comp));
+    $("#arm-kpis").innerHTML = (isAdmin() ? kpi("ARMs", num((vol || []).length)) : kpi("LOs you support", num((me.los || []).length))) +
+      kpi("Credited loans", num(tot.loans)) + kpi("Captured volume", moneyShort(tot.vol)) + kpi(isAdmin() ? "ARM variable comp" : "Your variable comp", money(tot.comp));
     $("#arm-volume-table").innerHTML = (vol || []).length
       ? `<thead><tr><th>ARM</th><th class="num">Funded loans</th><th class="num">Captured volume</th><th class="num">Existing relationships</th><th class="num">New relationships</th><th class="num">Variable comp</th></tr></thead><tbody>` +
         vol.map((v) => `<tr><td>${esc(v.arm_name)}</td><td class="num">${num(v.funded_loans)}</td><td class="num">${money(v.captured_volume)}</td><td class="num">${money(v.volume_existing_relationships)}</td><td class="num">${money(v.volume_new_relationships)}</td><td class="num">${money(v.arm_variable_comp)}</td></tr>`).join("") + `</tbody>`
-      : `<tr><td class="empty">No ARMs yet. Add one below once the pilot hire is made.</td></tr>`;
+      : `<tr><td class="empty">${isAdmin() ? "No ARMs yet. Add one below once the pilot hire is made." : "No credited loans yet."}</td></tr>`;
     $("#deploy-table").innerHTML = e2 ? `<tr><td class="empty">${esc(e2.message)}</td></tr>` : (deps || []).length
       ? `<thead><tr><th>ARM</th><th>Loan officer</th><th>Start</th><th>End</th></tr></thead><tbody>` + deps.map((d) => `<tr><td>${esc(d.arm_arms?.full_name)}</td><td>${esc(loName(d.originator_nmls))}</td><td>${date(d.start_date)}</td><td>${date(d.end_date)}</td></tr>`).join("") + `</tbody>`
       : `<tr><td class="empty">No deployments yet.</td></tr>`;
@@ -663,9 +709,10 @@
     e.preventDefault();
     const f = e.target, d = formData(f);
     if (!d.full_name) return setMsg(f, "Enter the ARM's name.");
+    if (!d.email) return setMsg(f, "Enter the ARM's WestCap email. It's how they sign in.");
     const { error } = await sb.from("arm_arms").insert({ full_name: d.full_name, email: d.email || null, phone: d.phone || null, start_date: d.start_date || null, comp_bps: d.comp_bps ? Number(d.comp_bps) : 10 });
     if (error) return setMsg(f, `Couldn't save: ${error.message}`);
-    f.reset(); setMsg(f, ""); toast("ARM added"); loaders.arms();
+    f.reset(); setMsg(f, ""); toast(`ARM added. ${d.full_name.split(" ")[0]} can sign in with ${d.email} and will see only the LOs you deploy them to.`); loaders.arms();
   });
   $("#form-deploy").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -696,10 +743,11 @@
 
   // ---------- status ----------
   loaders.status = async () => {
-    const [{ data: st }, { data: runs }, { data: admins }, ...counts] = await Promise.all([
+    const [{ data: st }, { data: runs }, { data: admins }, { data: arms }, ...counts] = await Promise.all([
       sb.from("arm_sync_state").select("*"),
       sb.from("arm_sync_log").select("*").order("id", { ascending: false }).limit(25),
       sb.from("arm_admins").select("*").order("added_at"),
+      sb.from("arm_arms").select("full_name,email,active").order("full_name"),
       ...["done", "pending", "error"].map((s) => sb.from("arm_realtor_queue").select("*", { count: "exact", head: true }).eq("status", s)),
     ]);
     const label = { listed: "Listed now", likely_to_list: "Likely to list", realtors: "Realtor directory" };
@@ -710,7 +758,9 @@
     $("#dir-state").innerHTML = row("Pulls done", `${num(done)} of ${num(total)} (${total ? Math.round((done / total) * 100) : 0}%)`) + row("Waiting", num(pending)) + row("Errors", num(errored)) + row("Credit floor", "Pauses below 6,000 Model Match credits");
     $("#runs-table").innerHTML = `<thead><tr><th>Started</th><th>Feed</th><th>Result</th><th class="num">Rows</th><th>Note</th></tr></thead><tbody>` +
       (runs || []).map((r) => `<tr><td>${dateTime(r.started_at)}</td><td>${esc(label[r.signal_type] || r.signal_type)}</td><td>${r.error ? (String(r.error).startsWith("paused") ? "Paused" : "Error") : !r.finished_at ? "Running" : r.changed === false ? "No new data" : r.partial ? "Continuing" : "Updated"}</td><td class="num">${num(r.rows_upserted || 0)}</td><td class="muted">${esc(r.error || "")}</td></tr>`).join("") + `</tbody>`;
-    $("#admins").innerHTML = (admins || []).map((a) => row(esc(a.email), `added ${date(a.added_at)}`)).join("") + `<p class="muted" style="margin:10px 0 0;font-size:12px">To add someone, ask Claude or add their email to the arm_admins table in Supabase.</p>`;
+    $("#admins").innerHTML = (admins || []).map((a) => row(`${esc(a.full_name || a.email)}<div class="muted">${esc(a.email)}</div>`, "Admin · sees everything")).join("") +
+      (arms || []).filter((a) => a.email).map((a) => row(`${esc(a.full_name)}<div class="muted">${esc(a.email)}</div>`, a.active ? "ARM · sees only their deployed LOs" : "ARM · inactive, no access")).join("") +
+      `<p class="muted" style="margin:10px 0 0;font-size:12px">ARMs get a login when you add them on the ARMs tab with their WestCap email. They sign in with a one-time email link the first time, then set a password. To add another admin, ask Claude.</p>`;
   };
 
   route();

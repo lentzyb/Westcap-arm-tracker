@@ -53,8 +53,8 @@
         <button data-view="listings">Listings</button>
         <button data-view="realtors">Realtors</button>
         <button data-view="los">Loan officers</button>
-        <button data-view="arms">ARMs</button>
-        <button data-view="status">Status</button>
+        <button data-view="arms" id="tab-arms">ARMs</button>
+        <button data-view="status" class="admin-only">Status</button>
       </nav>
       <div class="user">
         <span id="user-email"></span>
@@ -79,6 +79,12 @@
       </form>
       <!-- Overview -->
       <section id="view-overview" class="view">
+        <div class="hello-wrap"><h1 id="hello" class="hello"></h1><p id="hello-sub" class="muted"></p></div>
+        <div class="arm-only">
+          <div class="kpis" id="arm-home-kpis"></div>
+          <div class="card"><h3>Your LOs</h3><div id="arm-home-los" class="list"></div></div>
+        </div>
+        <div class="admin-only">
         <div class="status-row" id="status-pills"></div>
         <h2 class="section-h">Current WestCap LOs</h2>
         <div class="kpis" id="kpi-current"></div>
@@ -96,11 +102,12 @@
             <div id="by-state"></div>
           </div>
         </div>
+        </div>
       </section>
 
       <!-- Listings -->
       <section id="view-listings" class="view hidden">
-        <div class="subtabs" id="listing-scope">
+        <div class="subtabs admin-only" id="listing-scope">
           <button data-scope="current" class="active">Current LOs</button>
           <button data-scope="former">Former LOs</button>
         </div>
@@ -154,7 +161,7 @@
           </select>
           <button id="lo-apply" class="btn-navy">Apply</button>
         </div>
-        <div class="note">Click any loan officer to see their past borrowers who are listed or likely to list, and every realtor they've closed with: volume, units, average loan and wallet share for the last 14 months or all time. Click a realtor for every transaction they closed together. Alert settings are saved here, but nothing sends until notifications are switched on and an email or text service is connected.</div>
+        <div class="note"><span class="arm-only">You see the LOs you're deployed to. </span>Click any loan officer to see their past borrowers who are listed or likely to list, and every realtor they've closed with: volume, units, average loan and wallet share for the last 14 months or all time. Click a realtor for every transaction they closed together. <span class="admin-only">Alert settings are saved here, but nothing sends until notifications are switched on and an email or text service is connected.</span></div>
         <div class="table-meta" id="los-meta"></div>
         <div class="table-wrap"><table id="los-table"></table></div>
         <div class="pager" id="los-pager"></div>
@@ -167,11 +174,11 @@
           <h3>Captured volume by ARM</h3>
           <div class="table-wrap"><table id="arm-volume-table"></table></div>
         </div>
-        <div class="three-col">
+        <div class="three-col admin-only">
           <form class="card form" id="form-arm">
             <h3>Add an ARM</h3>
             <input name="full_name" required placeholder="Full name" />
-            <input name="email" type="email" placeholder="Email" />
+            <input name="email" type="email" required placeholder="WestCap email (their login)" />
             <input name="phone" placeholder="Phone" />
             <label>Start date <input name="start_date" type="date" /></label>
             <label>Comp (bps per loan) <input name="comp_bps" type="number" step="0.5" value="10" /></label>

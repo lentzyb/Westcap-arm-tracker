@@ -212,3 +212,10 @@ tr.lo-detail > td { background: var(--off); padding: 0; }
 .tchip { display: inline-block; background: var(--off); border: 1px solid var(--line); border-radius: 6px; padding: 1px 8px; font-size: 12px; margin: 0 4px 4px 0; }
 .drawer-listings h3 { margin-top: 24px; font-size: 16px; }
 @media (max-width: 640px) { .drawer-panel { padding: 22px 16px 32px; } .drawer-stats { grid-template-columns: repeat(2, 1fr); } }
+
+/* Roles: admins see everything; ARMs see their own view */
+body:not(.role-admin) .admin-only { display: none !important; }
+body:not(.role-arm) .arm-only { display: none !important; }
+.hello-wrap { margin: 4px 0 18px; }
+.hello { font-size: 28px; font-weight: 800; }
+.hello-wrap p { margin: 4px 0 0; }

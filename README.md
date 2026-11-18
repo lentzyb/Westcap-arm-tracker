@@ -12,7 +12,10 @@ Internal site for West Capital Lending Business Development. It tracks:
 
 - Static site (HTML/CSS/JS, no build step), hosted on Netlify.
 - Data lives in the **WestCap ARM Tracker** Supabase project (separate from West Cap Life).
-- Sign-in is email + password, with an email sign-in link for first time or a forgotten password (Supabase Auth). Row-level security only returns data to emails listed in `public.arm_admins`.
+- Sign-in is email + password, with an email sign-in link for first time or a forgotten password (Supabase Auth).
+- Two roles, enforced by row-level security:
+  - **Admins** (`public.arm_admins`) see everything.
+  - **ARMs** (`public.arm_arms`, matched on email, active) see only the LOs they're currently deployed to (`arm_deployments`), those LOs' past borrowers and realtors, and their own credited loans and comp.
 - Supabase edge functions refresh Model Match data twice daily (`arm-sync`) and build the realtor directory (`arm-realtor-sync`). `arm-lo-realtors` and `arm-details` pull LO detail, borrower names and LO + realtor loans on demand (1 Model Match credit per row; paused below the credit floor in `arm_config`).
 - Notifications are queued in `arm_notifications` but **never sent**: no email/text provider is connected and `arm_config.notifications_enabled` is `false`.
 
@@ -28,4 +31,5 @@ Internal site for West Capital Lending Business Development. It tracks:
 
 ## Adding someone
 
-Add their email to `public.arm_admins` in Supabase. They sign in with that email.
+- **ARM:** add them on the ARMs tab with their WestCap email, then deploy them to LOs. They sign in with that email.
+- **Admin:** add their email and name to `public.arm_admins` in Supabase.
