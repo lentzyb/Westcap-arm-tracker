@@ -515,6 +515,11 @@
         all: { buyer: { u: sumN(g, (r) => r.lo_buyer_units), v: sumN(g, (r) => r.lo_buyer_volume) }, listing: { u: sumN(g, (r) => r.lo_listing_units), v: sumN(g, (r) => r.lo_listing_volume) } },
         m14: { buyer: { u: sumN(g, (r) => r.lo14_buyer_units), v: sumN(g, (r) => r.lo14_buyer_volume) }, listing: { u: sumN(g, (r) => r.lo14_listing_units), v: sumN(g, (r) => r.lo14_listing_volume) } },
         realtor14: { buyer: sumN(g, (r) => r.buyer_volume_14m), listing: sumN(g, (r) => r.seller_volume_14m), both: sumN(g, (r) => r.volume_14m), units: sumN(g, (r) => r.units_14m) },
+        // The realtor's financed (mortgaged) volume by side: the wallet-share denominator, as in Model Match.
+        fin: {
+          "14m": { known: g.some((r) => r.fin_buyer_volume_14m != null), buyer: sumN(g, (r) => r.fin_buyer_volume_14m), listing: sumN(g, (r) => r.fin_listing_volume_14m) },
+          all: { known: g.some((r) => r.alltime_refreshed_at), buyer: sumN(g, (r) => r.fin_buyer_volume_all), listing: sumN(g, (r) => r.fin_listing_volume_all) },
+        },
         hasStats: g.some((r) => r.stats_refreshed_at), listingsLoaded: g.every((r) => r.listings_refreshed_at),
         active: sumN(g, (r) => r.active_listings_count),
       };
@@ -524,9 +529,10 @@
     const src = period === "14m" ? m.m14 : m.all;
     const u = side === "both" ? src.buyer.u + src.listing.u : src[side].u;
     const v = side === "both" ? src.buyer.v + src.listing.v : src[side].v;
-    const denom = m.realtor14[side];
-    const share = period === "14m" && m.hasStats && denom > 0 ? Math.min(v / denom, 1) : null;
-    return { units: u, volume: v, avg: u ? v / u : null, share };
+    const f = m.fin[period];
+    const denom = side === "both" ? f.buyer + f.listing : f[side];
+    const share = f.known && denom > 0 ? Math.min(v / denom, 1) : null;
+    return { units: u, volume: v, avg: u ? v / u : null, share, shareKnown: f.known };
   }
 
   async function renderLoDetail(panel) {
@@ -543,11 +549,11 @@
       const label = `${period === "14m" ? "last 14 months" : "all time"}, ${side === "both" ? "both sides" : side === "buyer" ? "buyer side" : "listing side"}`;
       if (!merged.length) { box.innerHTML = `<div class="empty">No realtors on file for ${esc(label)}${period === "14m" && !rows.some((r) => r.lo14_buyer_units != null || r.lo14_listing_units != null) ? " yet. The 14-month numbers load from Model Match the first time an LO is opened" : ""}.</div>`; return; }
       box.innerHTML = `<div class="rel-sum muted">${num(merged.length)} realtors · ${num(totU)} loans · ${money(totV)} · ${esc(label)}</div>
-        <div class="table-wrap"><table class="rel-table"><thead><tr><th>Name</th><th class="num">Volume</th><th class="num">Units</th><th class="num">Avg loan size</th><th class="num" title="Share of the realtor's own 14-month volume on this side that closed with this LO">Wallet share</th><th class="num">Active listings</th><th></th></tr></thead><tbody>
+        <div class="table-wrap"><table class="rel-table"><thead><tr><th>Name</th><th class="num">Volume</th><th class="num">Units</th><th class="num">Avg loan size</th><th class="num" title="This LO's share of the realtor's financed volume on this side, for the selected period (the same measure Model Match uses)">Wallet share</th><th class="num">Active listings</th><th></th></tr></thead><tbody>
         ${merged.map((m, i) => `<tr class="clickable rel-row" data-i="${i}">
           <td><div class="rel-name"><span class="avatar">${esc(initials(m.full_name))}</span><div>${esc(m.full_name)}${m.profiles > 1 ? ` <span class="muted small" title="Model Match lists this realtor under ${m.profiles} profiles; they are combined here">· ${m.profiles} profiles merged</span>` : ""}<div class="muted">${esc(m.office_name || "Brokerage not on file")}</div></div></div></td>
           <td class="num strong">${moneyShort(m.s.volume)}</td><td class="num">${num(m.s.units)}</td><td class="num">${m.s.avg ? moneyShort(m.s.avg) : "—"}</td>
-          <td class="num">${m.s.share != null ? `<span class="pill-share">${pct(m.s.share)}</span>` : `<span class="muted">${period === "14m" ? (m.hasStats ? "—" : "Loading…") : "14 mo only"}</span>`}</td>
+          <td class="num">${m.s.share != null ? `<span class="pill-share">${pct(m.s.share)}</span>` : `<span class="muted" title="${m.s.shareKnown ? "No financed volume on record for this realtor" : "Loads from Model Match when this LO is refreshed"}">${m.s.shareKnown ? "—" : "Loading…"}</span>`}</td>
           <td class="num">${m.listingsLoaded ? num(m.active) : `<span class="muted">…</span>`}</td>
           <td class="chev-r">›</td></tr>`).join("")}
         </tbody></table></div>`;
