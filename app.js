@@ -299,67 +299,69 @@
     table.innerHTML = `<tr><td class="empty">Loading…</td></tr>`;
     const { data, count, error } = await realtorQuery(true).range(rPage * PAGE, rPage * PAGE + PAGE - 1);
     if (error) return fail(table, error);
-    $("#realtors-meta").textContent = `${num(count)} realtors · click a row to see which LOs they work with`;
+    $("#realtors-meta").textContent = `${num(count)} realtors · click a realtor to see the LOs they work with and every transaction together`;
     if (!data.length) { table.innerHTML = `<tr><td class="empty">No realtors match.</td></tr>`; $("#realtors-pager").innerHTML = ""; return; }
-    table.innerHTML = `<thead><tr><th>Realtor</th><th>Brokerage</th><th>Email</th><th>Phone</th><th class="num">WestCap LOs</th><th class="num">Buyer-side loans</th><th class="num">Listing-side loans</th><th class="num">Volume with WestCap</th></tr></thead><tbody>` +
-      data.map((r) => `<tr class="clickable" data-id="${esc(r.mmi_agent_id)}">
+    table.innerHTML = `<thead><tr><th></th><th>Realtor</th><th>Brokerage</th><th>Email</th><th>Phone</th><th class="num">WestCap LOs</th><th class="num">Buyer-side loans</th><th class="num">Listing-side loans</th><th class="num">Volume with WestCap</th></tr></thead><tbody>` +
+      data.map((r) => `<tr class="clickable lo-row rl-row" data-id="${esc(r.mmi_agent_id)}">
+        <td class="chev" aria-label="Show details"><span>›</span></td>
         <td>${esc(r.full_name)}</td><td class="muted">${esc(r.office_name || "—")}</td>
         <td>${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : "—"}</td>
         <td>${phone(r.phone)}</td><td class="num">${num(r.westcap_los_worked_with)}</td>
         <td class="num">${num(r.buyer_side_loans_24m || 0)}</td><td class="num">${num(r.listing_side_loans_24m || 0)}</td>
         <td class="num">${money(r.total_volume_24m)}</td></tr>`).join("") + `</tbody>`;
-    $$("tr.clickable", table).forEach((tr) => tr.addEventListener("click", () => realtorDetail(tr.dataset.id)));
+    $$("tr.rl-row", table).forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest("a")) toggleRealtorDetail(tr); }));
     pager($("#realtors-pager"), rPage, count, (p) => { rPage = p; loaders.realtors(); });
   };
-  async function realtorDetail(id) {
-    const box = $("#realtor-detail");
-    box.classList.remove("hidden");
-    box.innerHTML = "Loading…";
-    await getRoster();
-    const [{ data: r }, { data: rels, error }] = await Promise.all([
-      sb.from("arm_realtors").select("*").eq("mmi_agent_id", id).single(),
-      sb.from("arm_lo_realtor_relationships").select("*").eq("mmi_agent_id", id).order("volume", { ascending: false }),
-    ]);
-    if (error) return fail(box, error);
-    box.innerHTML = `<h3>${esc(r?.full_name)} <span class="muted" style="font-weight:400">· ${esc(r?.office_name || "")}</span></h3>
-      <div class="list">${row("Email", r?.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : "—")}${row("Phone", phone(r?.phone))}</div>
-      <h3 style="margin-top:14px">WestCap LOs they've closed with</h3>
-      <div class="muted realtor-loans-status">Loading the homes closed with each LO…</div>
-      <div class="realtor-los"></div>`;
-    box.scrollIntoView({ behavior: "smooth", block: "start" });
+  // Realtor dropdown: the WestCap LOs they've closed with, Model Match style; click an LO for the transactions.
+  function toggleRealtorDetail(tr) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains("lo-detail")) { next.remove(); tr.classList.remove("open"); return; }
+    tr.classList.add("open");
+    const d = document.createElement("tr");
+    d.className = "lo-detail";
+    d.innerHTML = `<td colspan="${tr.children.length}"><div class="lo-panel rl-panel" data-agent="${esc(tr.dataset.id)}">
+      <div class="lo-panel-head">
+        <div class="rl-head"><div class="muted">Loading…</div></div>
+        <div class="lo-panel-actions">
+          <div class="seg lo-period"><button data-v="14m">Last 14 months</button><button data-v="all" class="active">All time</button></div>
+          <div class="seg lo-side"><button data-v="buyer">Buyer side</button><button data-v="listing">Listing side</button><button data-v="both" class="active">Both</button></div>
+        </div>
+      </div>
+      <div class="rl-los"><div class="empty">Loading…</div></div></div></td>`;
+    tr.after(d);
+    const panel = $(".rl-panel", d);
+    $$(".seg", panel).forEach((g) => $$("button", g).forEach((b) => b.addEventListener("click", () => {
+      $$("button", g).forEach((x) => x.classList.toggle("active", x === b));
+      renderRealtorDetail(panel);
+    })));
+    renderRealtorDetail(panel);
+  }
 
-    // One block per LO: loans and volume together, then the homes they closed.
-    const byLo = new Map();
-    rels.forEach((x) => {
-      const g = byLo.get(x.originator_nmls) || { nmls: x.originator_nmls, units: 0, volume: 0, sides: [] };
-      g.units += Number(x.units || 0); g.volume += Number(x.volume || 0);
-      g.sides.push(`${num(x.units)} ${x.side === "buyer" ? "buyer-side" : "listing-side"}`);
-      byLo.set(x.originator_nmls, g);
-    });
-    const los = [...byLo.values()].sort((a, b) => b.volume - a.volume);
-    const status = $(".realtor-loans-status", box), list = $(".realtor-los", box);
-    const draw = async () => {
-      const [{ data: loans, error: e }, { data: pulls }] = await Promise.all([
-        sb.from("arm_lo_realtor_loans").select("*").eq("mmi_agent_id", id),
-        sb.from("arm_lo_realtor_loan_pulls").select("originator_nmls").eq("mmi_agent_id", id),
-      ]);
-      if (e) throw e;
-      const pulledSet = new Set((pulls || []).map((p) => p.originator_nmls));
-      list.innerHTML = los.map((g) => {
-        const mine = loans.filter((l) => l.originator_nmls === g.nmls);
-        return `<div class="realtor-block">
-          <div class="realtor-top"><div class="realtor-name">${esc(loName(g.nmls))}<div class="muted">NMLS ${esc(g.nmls)}</div></div>
-          <div class="realtor-contact"><strong>${num(g.units)} ${g.units === 1 ? "loan" : "loans"} · ${money(g.volume)}</strong><div class="muted">${esc(g.sides.join(" · "))}</div></div></div>
-          ${loansTable(mine, { pulled: pulledSet.has(g.nmls) })}</div>`;
-      }).join("") || `<div class="empty">No WestCap LO relationships on file.</div>`;
-    };
+  async function renderRealtorDetail(panel) {
+    const id = panel.dataset.agent, box = $(".rl-los", panel);
+    const period = $(".lo-period .active", panel).dataset.v, side = $(".lo-side .active", panel).dataset.v;
     try {
-      if (!los.length) { status.textContent = ""; return draw(); }
-      await draw();
-      const note = await pullPairLoans(los.map((g) => g.nmls), [id]);
-      await draw();
-      status.textContent = note || `${num(los.length)} ${los.length === 1 ? "LO" : "LOs"} · homes closed from Model Match public records`;
-    } catch (err) { status.textContent = `Couldn't load the homes: ${err.message}`; }
+      await getRoster();
+      const rows = await fetchAll(() => sb.from("arm_lo_realtor_detail").select("*").eq("mmi_agent_id", id));
+      const r0 = rows[0] || (await sb.from("arm_realtors").select("*").eq("mmi_agent_id", id).maybeSingle()).data || {};
+      $(".rl-head", panel).innerHTML = `<strong>${esc(r0.full_name || "")}</strong> <span class="muted">· ${esc(r0.office_name || "Brokerage not on file")}</span>
+        <div class="muted">${r0.email ? `<a href="mailto:${esc(r0.email)}">${esc(r0.email)}</a>` : "No email"} · ${phone(r0.phone)}${r0.volume_14m != null ? ` · Own last 14 months: ${moneyShort(r0.volume_14m)}, ${num(r0.units_14m || 0)} deals` : ""}${r0.listings_refreshed_at ? ` · ${num(r0.active_listings_count || 0)} active listings` : ""}</div>`;
+      // One row per WestCap LO; the realtor-side figures (financed volume) are the same on every row.
+      const los = rows.map((r) => ({ nmls: r.originator_nmls, m: mergeRealtors([r])[0] }))
+        .map((x) => ({ ...x, s: relStats(x.m, period, side) })).filter((x) => x.s.units > 0)
+        .sort((a, b) => b.s.volume - a.s.volume || b.s.units - a.s.units);
+      const label = `${period === "14m" ? "last 14 months" : "all time"}, ${side === "both" ? "both sides" : side === "buyer" ? "buyer side" : "listing side"}`;
+      if (!los.length) { box.innerHTML = `<div class="empty">No WestCap LO transactions on file for ${esc(label)}.</div>`; return; }
+      box.innerHTML = `<div class="rel-sum muted">${num(los.length)} WestCap ${los.length === 1 ? "LO" : "LOs"} · ${num(sumN(los, (x) => x.s.units))} loans · ${money(sumN(los, (x) => x.s.volume))} · ${esc(label)}</div>
+        <div class="table-wrap"><table class="rel-table"><thead><tr><th>Loan officer</th><th class="num">Volume</th><th class="num">Units</th><th class="num">Avg loan size</th><th class="num" title="This LO's share of the realtor's financed volume on this side, for the selected period">Wallet share</th><th></th></tr></thead><tbody>
+        ${los.map((x, i) => `<tr class="clickable rel-row" data-i="${i}">
+          <td><div class="rel-name"><span class="avatar">${esc(initials(loName(x.nmls)))}</span><div>${esc(loName(x.nmls))}<div class="muted">NMLS ${esc(x.nmls)}${roster?.get(x.nmls) && !roster.get(x.nmls).active ? " · former LO" : ""}</div></div></div></td>
+          <td class="num strong">${moneyShort(x.s.volume)}</td><td class="num">${num(x.s.units)}</td><td class="num">${x.s.avg ? moneyShort(x.s.avg) : "—"}</td>
+          <td class="num">${x.s.share != null ? `<span class="pill-share">${pct(x.s.share)}</span>` : `<span class="muted" title="${x.s.shareKnown ? "No financed volume on record for this realtor" : "Loads from Model Match when an LO they work with is refreshed"}">${x.s.shareKnown ? "—" : "Loading…"}</span>`}</td>
+          <td class="chev-r">›</td></tr>`).join("")}
+        </tbody></table></div>`;
+      $$("tr.rel-row", box).forEach((tr) => tr.addEventListener("click", () => { const x = los[Number(tr.dataset.i)]; openRelationship(x.nmls, { ...x.m, s: x.s }, period, side); }));
+    } catch (err) { fail(box, err); }
   }
   $("#r-export").addEventListener("click", async () => {
     toast("Building the export…");
@@ -557,7 +559,7 @@
           <td class="num">${m.listingsLoaded ? num(m.active) : `<span class="muted">…</span>`}</td>
           <td class="chev-r">›</td></tr>`).join("")}
         </tbody></table></div>`;
-      $$("tr.rel-row", box).forEach((tr) => tr.addEventListener("click", () => openRelationship(panel, merged[Number(tr.dataset.i)], period, side)));
+      $$("tr.rel-row", box).forEach((tr) => tr.addEventListener("click", () => openRelationship(nmls, merged[Number(tr.dataset.i)], period, side)));
     } catch (err) { fail(box, err); }
   }
 
@@ -574,8 +576,8 @@
     }
     return d;
   }
-  async function openRelationship(panel, m, period, side) {
-    const d = drawer(), body = $(".drawer-body", d), nmls = panel.dataset.nmls;
+  async function openRelationship(nmls, m, period, side) {
+    const d = drawer(), body = $(".drawer-body", d);
     const loNm = loName(nmls);
     d.classList.remove("hidden");
     const draw = (loans, note, pulled) => {
