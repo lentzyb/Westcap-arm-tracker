@@ -134,11 +134,14 @@
         <div class="filters">
           <input id="r-search" placeholder="Search realtor name, email, or brokerage" />
           <select id="r-sort">
+            <option value="deals">Most deals with WestCap</option>
             <option value="westcap_los_worked_with">Most WestCap LOs</option>
             <option value="total_volume_24m">Most volume with WestCap</option>
             <option value="buyer_side_loans_24m">Most buyer-side loans</option>
             <option value="full_name">Name A–Z</option>
           </select>
+          <label class="check" title="Realtors with 2+ deals with current WestCap LOs in the last 14 months, in CA, AZ, TN, MI and WA"><input type="checkbox" id="r-focus" checked /> Focus realtors</label>
+          <select id="r-state"><option value="">All focus states</option><option>CA</option><option>AZ</option><option>TN</option><option>MI</option><option>WA</option></select>
           <label class="check"><input type="checkbox" id="r-email" /> Has email</label>
           <button id="r-apply" class="btn-navy">Apply</button>
           <button id="r-export" class="btn-outline">Export CSV</button>

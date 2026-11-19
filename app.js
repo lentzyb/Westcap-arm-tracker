@@ -202,9 +202,9 @@
       </tbody></table>`;
   }
   // Ask the server to pull any missing loans for these LO + realtor pairs. Returns a short status note.
-  async function pullPairLoans(nmlsList, agentIds) {
+  async function pullPairLoans(nmlsList, agentIds, scope = "allTime") {
     for (let round = 0; round < 6; round++) {
-      const { data, error } = await sb.functions.invoke("arm-details", { body: { action: "pair_loans", nmls: nmlsList, agent_ids: agentIds } });
+      const { data, error } = await sb.functions.invoke("arm-details", { body: { action: "pair_loans", nmls: nmlsList, agent_ids: agentIds, scope } });
       if (error) throw error;
       if (data?.error) throw new Error(data.error);
       if (data.paused) return `Some loans aren't loaded yet: ${data.paused}.`;
@@ -286,29 +286,39 @@
   // ---------- realtors ----------
   let rPage = 0;
   $("#r-apply").addEventListener("click", () => { rPage = 0; loaders.realtors(); });
+  ["#r-focus", "#r-state", "#r-sort"].forEach((id) => $(id).addEventListener("change", () => { rPage = 0; loaders.realtors(); }));
   $("#r-search").addEventListener("keydown", (e) => { if (e.key === "Enter") { rPage = 0; loaders.realtors(); } });
   function realtorQuery(withCount) {
     const q = $("#r-search").value.trim().replace(/[,()]/g, " "), sort = $("#r-sort").value;
     let query = sb.from("arm_realtor_directory").select("*", withCount ? { count: "exact" } : undefined);
     if (q) query = query.or(`full_name.ilike.%${q}%,email.ilike.%${q}%,office_name.ilike.%${q}%`);
     if ($("#r-email").checked) query = query.not("email", "is", null);
-    return query.order(sort, { ascending: sort === "full_name", nullsFirst: false });
+    if ($("#r-focus").checked) query = query.eq("focus", true);
+    const st = $("#r-state").value;
+    if (st && $("#r-focus").checked) query = query.ilike("focus_states", `%${st}%`);
+    // Focus view sorts by 14-month deals with WestCap unless a name sort is chosen.
+    const col = $("#r-focus").checked && sort !== "full_name" ? (sort === "westcap_los_worked_with" ? "los_14m_focus" : sort === "total_volume_24m" ? "volume_14m_focus" : "deals_14m_focus")
+      : sort === "deals" ? "total_volume_24m" : sort;
+    return query.order(col, { ascending: col === "full_name", nullsFirst: false });
   }
   loaders.realtors = async () => {
     const table = $("#realtors-table");
     table.innerHTML = `<tr><td class="empty">Loading…</td></tr>`;
     const { data, count, error } = await realtorQuery(true).range(rPage * PAGE, rPage * PAGE + PAGE - 1);
     if (error) return fail(table, error);
-    $("#realtors-meta").textContent = `${num(count)} realtors · click a realtor to see the LOs they work with and every transaction together`;
+    const focus = $("#r-focus").checked;
+    $("#realtors-meta").textContent = `${num(count)} ${focus ? "focus realtors (2+ deals with WestCap LOs in the last 14 months, CA · AZ · TN · MI · WA)" : "realtors"} · click a realtor to see the LOs they work with and every transaction together`;
     if (!data.length) { table.innerHTML = `<tr><td class="empty">No realtors match.</td></tr>`; $("#realtors-pager").innerHTML = ""; return; }
-    table.innerHTML = `<thead><tr><th></th><th>Realtor</th><th>Brokerage</th><th>Email</th><th>Phone</th><th class="num">WestCap LOs</th><th class="num">Buyer-side loans</th><th class="num">Listing-side loans</th><th class="num">Volume with WestCap</th></tr></thead><tbody>` +
+    table.innerHTML = (focus
+      ? `<thead><tr><th></th><th>Realtor</th><th>Brokerage</th><th>Email</th><th>Phone</th><th>State</th><th class="num">WestCap LOs (14 mo)</th><th class="num">Deals with WestCap (14 mo)</th><th class="num">Volume with WestCap (14 mo)</th></tr></thead><tbody>`
+      : `<thead><tr><th></th><th>Realtor</th><th>Brokerage</th><th>Email</th><th>Phone</th><th class="num">WestCap LOs</th><th class="num">Buyer-side loans</th><th class="num">Listing-side loans</th><th class="num">Volume with WestCap</th></tr></thead><tbody>`) +
       data.map((r) => `<tr class="clickable lo-row rl-row" data-id="${esc(r.mmi_agent_id)}">
         <td class="chev" aria-label="Show details"><span>›</span></td>
         <td>${esc(r.full_name)}</td><td class="muted">${esc(r.office_name || "—")}</td>
         <td>${r.email ? `<a href="mailto:${esc(r.email)}">${esc(r.email)}</a>` : "—"}</td>
-        <td>${phone(r.phone)}</td><td class="num">${num(r.westcap_los_worked_with)}</td>
-        <td class="num">${num(r.buyer_side_loans_24m || 0)}</td><td class="num">${num(r.listing_side_loans_24m || 0)}</td>
-        <td class="num">${money(r.total_volume_24m)}</td></tr>`).join("") + `</tbody>`;
+        <td>${phone(r.phone)}</td>${focus
+          ? `<td class="muted">${esc(r.focus_states || "—")}</td><td class="num">${num(r.los_14m_focus || 0)}</td><td class="num strong">${num(r.deals_14m_focus || 0)}</td><td class="num">${money(r.volume_14m_focus)}</td>`
+          : `<td class="num">${num(r.westcap_los_worked_with)}</td><td class="num">${num(r.buyer_side_loans_24m || 0)}</td><td class="num">${num(r.listing_side_loans_24m || 0)}</td><td class="num">${money(r.total_volume_24m)}</td>`}</tr>`).join("") + `</tbody>`;
     $$("tr.rl-row", table).forEach((tr) => tr.addEventListener("click", (e) => { if (!e.target.closest("a")) toggleRealtorDetail(tr); }));
     pager($("#realtors-pager"), rPage, count, (p) => { rPage = p; loaders.realtors(); });
   };
@@ -323,7 +333,7 @@
       <div class="lo-panel-head">
         <div class="rl-head"><div class="muted">Loading…</div></div>
         <div class="lo-panel-actions">
-          <div class="seg lo-period"><button data-v="14m">Last 14 months</button><button data-v="all" class="active">All time</button></div>
+          <div class="seg lo-period"><button data-v="14m" class="active">Last 14 months</button><button data-v="all">All time</button></div>
           <div class="seg lo-side"><button data-v="buyer">Buyer side</button><button data-v="listing">Listing side</button><button data-v="both" class="active">Both</button></div>
         </div>
       </div>
@@ -367,8 +377,11 @@
     toast("Building the export…");
     try {
       const rows = await fetchAll(() => realtorQuery(false), 50000);
-      const cols = ["full_name", "office_name", "email", "phone", "westcap_los_worked_with", "buyer_side_loans_24m", "listing_side_loans_24m", "total_volume_24m"];
-      const head = ["Realtor", "Brokerage", "Email", "Phone", "WestCap LOs", "Buyer-side loans", "Listing-side loans", "Volume with WestCap"];
+      const focus = $("#r-focus").checked;
+      const cols = focus ? ["full_name", "office_name", "email", "phone", "focus_states", "los_14m_focus", "deals_14m_focus", "volume_14m_focus"]
+        : ["full_name", "office_name", "email", "phone", "westcap_los_worked_with", "buyer_side_loans_24m", "listing_side_loans_24m", "total_volume_24m"];
+      const head = focus ? ["Realtor", "Brokerage", "Email", "Phone", "State", "WestCap LOs (14 mo)", "Deals with WestCap (14 mo)", "Volume with WestCap (14 mo)"]
+        : ["Realtor", "Brokerage", "Email", "Phone", "WestCap LOs", "Buyer-side loans", "Listing-side loans", "Volume with WestCap"];
       const csv = [head.join(","), ...rows.map((r) => cols.map((c) => `"${String(r[c] ?? "").replace(/"/g, '""')}"`).join(","))].join("\n");
       const a = Object.assign(document.createElement("a"), { href: URL.createObjectURL(new Blob([csv], { type: "text/csv" })), download: `westcap-realtors-${new Date().toISOString().slice(0, 10)}.csv` });
       a.click();
@@ -586,7 +599,7 @@
       // One row per loan (a loan can match two merged profiles), newest first.
       const seen = new Set();
       const tx = (loans || []).filter((l) => roleOk(l.agent_role) && (period === "all" || (l.mortgage_date && new Date(l.mortgage_date) >= cutoff)))
-        .filter((l) => { const k = l.loan_id; if (seen.has(k)) return false; seen.add(k); return true; })
+        .filter((l) => { const k = `${String(l.address || "").toLowerCase()}|${l.mortgage_date}|${l.mortgage_amount}`; if (seen.has(k)) return false; seen.add(k); return true; })
         .sort((a, b) => String(b.mortgage_date || "").localeCompare(String(a.mortgage_date || "")));
       body.innerHTML = `
         <p class="eyebrow-dark">Relationship</p>
@@ -621,17 +634,19 @@
     const read = async () => {
       const [{ data: loans, error }, { data: pulls }] = await Promise.all([
         sb.from("arm_lo_realtor_loans").select("*").eq("originator_nmls", nmls).in("mmi_agent_id", m.ids),
-        sb.from("arm_lo_realtor_loan_pulls").select("mmi_agent_id").eq("originator_nmls", nmls).in("mmi_agent_id", m.ids),
+        sb.from("arm_lo_realtor_loan_pulls").select("mmi_agent_id,scope").eq("originator_nmls", nmls).in("mmi_agent_id", m.ids),
       ]);
       if (error) throw error;
-      return { loans, pulledAll: (pulls || []).length >= m.ids.length };
+      // All time needs an all-time pull; Last 14 months is covered by any pull.
+      const ok = (pulls || []).filter((p) => period === "14m" || p.scope === "allTime");
+      return { loans, pulledAll: ok.length >= m.ids.length };
     };
     try {
       let { loans, pulledAll } = await read();
       let note = "";
       if (!pulledAll) {
         draw(loans, "Pulling these transactions from Model Match…", false);
-        note = await pullPairLoans([nmls], m.ids);
+        note = await pullPairLoans([nmls], m.ids, period === "14m" ? "14m" : "allTime");
         ({ loans, pulledAll } = await read());
       }
       draw(loans, note, pulledAll);
