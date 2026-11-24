@@ -51,7 +51,8 @@
     if (roster) return roster;
     const rows = await fetchAll(() => sb.from("arm_loan_officers").select("nmls_id,full_name,office_city,office_state,active").order("full_name"));
     roster = new Map(rows.map((r) => [r.nmls_id, r]));
-    $("#lo-options").innerHTML = rows.filter((r) => r.active).map((r) => `<option value="${esc(r.full_name)} (${esc(r.nmls_id)})"></option>`).join("");
+    const dl = $("#lo-options");
+    if (dl) dl.innerHTML = rows.filter((r) => r.active).map((r) => `<option value="${esc(r.full_name)} (${esc(r.nmls_id)})"></option>`).join("");
     return roster;
   }
   const loName = (nmls) => roster?.get(nmls)?.full_name || `NMLS ${nmls}`;
@@ -937,6 +938,10 @@
       (arms || []).filter((a) => a.email).map((a) => row(`${esc(a.full_name)}<div class="muted">${esc(a.email)}</div>`, a.active ? "ARM · sees only their assigned LOs and states" : "ARM · inactive, no access")).join("") +
       `<p class="muted" style="margin:10px 0 0;font-size:12px">ARMs get a login when you add them on the ARMs tab with their WestCap email. They sign in with a one-time email link the first time, then set a password. To add another admin, ask Claude.</p>`;
   };
+
+  // Shared with cobrand.js (the Co-brand tab).
+  window.ARMApp = { sb, loaders, getRoster, loName, parseId, esc, num, money, moneyShort, date, phone, toast, isAdmin, fetchAll, me: () => me };
+  (window.ARMExtensions || []).forEach((f) => f(window.ARMApp));
 
   route();
 })();

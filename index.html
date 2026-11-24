@@ -7,7 +7,7 @@
   <title>ARM Tracker · WestCap</title>
   <link rel="icon" href="assets/favicon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@600;700;800&family=Montserrat:wght@500;600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -53,6 +53,7 @@
         <button data-view="listings">Listings</button>
         <button data-view="realtors">Realtors</button>
         <button data-view="los">Loan officers</button>
+        <button data-view="cobrand">Co-brand</button>
         <button data-view="arms" id="tab-arms">ARMs</button>
         <button data-view="status" class="admin-only">Status</button>
       </nav>
@@ -170,6 +171,59 @@
       </section>
 
       <!-- ARMs -->
+
+      <!-- Co-brand -->
+      <section id="view-cobrand" class="view hidden">
+        <div class="hello-wrap">
+          <h1 class="hello">Co-brand</h1>
+          <p class="muted">Make on-brand social posts and flyers for a loan officer and a realtor partner. Every asset gets the required disclosures and a compliance check before it downloads.</p>
+        </div>
+        <div class="cb-wrap">
+          <form class="card cb-controls" id="cb-form" autocomplete="off">
+            <div class="cb-step"><span class="cb-n">1</span>Partners</div>
+            <label>Loan officer<input name="lo" list="cb-lo-options" placeholder="LO name or NMLS" /></label>
+            <datalist id="cb-lo-options"></datalist>
+            <label>Realtor<select name="realtor" disabled><option value="">Pick a loan officer first</option></select></label>
+            <div class="cb-step"><span class="cb-n">2</span>Asset</div>
+            <div class="cb-types" id="cb-types"></div>
+            <div class="seg cb-format" id="cb-format"></div>
+            <div id="cb-fields"></div>
+            <div class="cb-step"><span class="cb-n">3</span>Photos <span class="muted small">(optional, stay on your computer)</span></div>
+            <div class="cb-photos">
+              <label class="cb-photo">Listing photo<input type="file" accept="image/*" data-photo="listing" /></label>
+              <label class="cb-photo">LO headshot<input type="file" accept="image/*" data-photo="lo" /></label>
+              <label class="cb-photo">Realtor headshot<input type="file" accept="image/*" data-photo="realtor" /></label>
+            </div>
+            <div class="cb-step"><span class="cb-n">4</span>Words</div>
+            <label>Headline<input name="headline" maxlength="70" /></label>
+            <label>Message<textarea name="body" rows="3" maxlength="260"></textarea></label>
+            <label>If this gets printed or boosted as a paid ad, who pays?
+              <select name="cost">
+                <option value="organic">Nobody: organic post or digital only</option>
+                <option value="split">Split by each side's share of the space</option>
+                <option value="lo_all">The LO pays for all of it</option>
+                <option value="realtor_all">The realtor pays for all of it</option>
+              </select></label>
+          </form>
+          <div class="cb-right">
+            <div class="card cb-stage-card">
+              <div class="cb-stage" id="cb-stage"><div class="empty">Pick a loan officer and a realtor to start.</div></div>
+            </div>
+            <div class="card cb-check" id="cb-check"></div>
+            <div class="card cb-caption-card">
+              <div class="cb-caption-head"><h3>Caption</h3><button type="button" class="btn-outline small" id="cb-copy">Copy caption</button></div>
+              <textarea id="cb-caption" rows="5"></textarea>
+            </div>
+            <div class="cb-actions">
+              <button type="button" class="btn-gold" id="cb-png">Download PNG</button>
+              <button type="button" class="btn-outline" id="cb-pdf">Download PDF</button>
+              <span class="muted small" id="cb-status"></span>
+            </div>
+            <div class="card"><h3>Recently made</h3><div class="table-wrap"><table id="cb-recent"></table></div></div>
+          </div>
+        </div>
+      </section>
+
       <section id="view-arms" class="view hidden">
         <div class="kpis" id="arm-kpis"></div>
         <div class="card">
@@ -191,6 +245,7 @@
             <h3>Assign LOs or states to an ARM</h3>
             <select name="arm_id" required class="arm-select"></select>
             <input name="lo_lookup" placeholder="Add an LO: name or NMLS" list="lo-options" autocomplete="off" />
+            <datalist id="lo-options"></datalist>
             <div class="chips" id="deploy-lo-chips"></div>
             <div class="state-picks" id="deploy-states"></div>
             <p class="hint">A state covers every active LO based there, including LOs who join later.</p>
@@ -260,6 +315,9 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="config.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="cobrand.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
