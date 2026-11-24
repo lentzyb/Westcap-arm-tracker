@@ -188,12 +188,13 @@
             <div class="cb-types" id="cb-types"></div>
             <div class="seg cb-format" id="cb-format"></div>
             <div id="cb-fields"></div>
-            <div class="cb-step"><span class="cb-n">3</span>Photos <span class="muted small">(optional, stay on your computer)</span></div>
+            <div class="cb-step"><span class="cb-n">3</span>Photos</div>
             <div class="cb-photos">
-              <label class="cb-photo">Listing photo<input type="file" accept="image/*" data-photo="listing" /></label>
-              <label class="cb-photo">LO headshot<input type="file" accept="image/*" data-photo="lo" /></label>
-              <label class="cb-photo">Realtor headshot<input type="file" accept="image/*" data-photo="realtor" /></label>
+              <div class="cb-photo" data-k="lo"><label><span class="cb-thumb"></span><b>LO headshot</b><small></small><input type="file" accept="image/*" data-photo="lo" /></label><button type="button" class="cb-rm hidden">Remove</button></div>
+              <div class="cb-photo" data-k="realtor"><label><span class="cb-thumb"></span><b>Realtor headshot</b><small></small><input type="file" accept="image/*" data-photo="realtor" /></label><button type="button" class="cb-rm hidden">Remove</button></div>
+              <div class="cb-photo" data-k="listing"><label><span class="cb-thumb"></span><b>Listing photo</b><small></small><input type="file" accept="image/*" data-photo="listing" /></label><button type="button" class="cb-rm hidden">Remove</button></div>
             </div>
+            <p class="muted small" style="margin:0">Headshots save to the LO or realtor, so anyone making their assets gets them next time. Listing photos aren't saved.</p>
             <div class="cb-step"><span class="cb-n">4</span>Words</div>
             <label>Headline<input name="headline" maxlength="70" /></label>
             <label>Message<textarea name="body" rows="3" maxlength="260"></textarea></label>

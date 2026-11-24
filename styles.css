@@ -288,10 +288,19 @@ h3.ap-h { font-size: 16px; margin: 22px 0 2px; }
 .cb-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 #cb-fields { display: flex; flex-direction: column; gap: 10px; }
 .cb-photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
-.cb-photo { border: 1px dashed var(--line); border-radius: 8px; padding: 10px 6px; text-align: center; cursor: pointer; font-size: 12px !important; color: var(--navy) !important; font-weight: 600; }
+.cb-photo { border: 1px dashed var(--line); border-radius: 8px; padding: 10px 6px 8px; text-align: center; font-size: 12px; color: var(--navy); position: relative; }
+.cb-photo label { display: flex !important; flex-direction: column; align-items: center; gap: 3px !important; cursor: pointer; color: var(--navy) !important; }
+.cb-photo b { font-size: 12px; font-weight: 600; }
+.cb-photo small { font-size: 10.5px; color: var(--slate); line-height: 1.25; }
 .cb-photo input { display: none; }
-.cb-photo.has { border-style: solid; border-color: var(--green); background: #E3F6EC; }
-.cb-photo.has::after { content: "Added"; font-weight: 500; color: #157347; font-size: 11px; }
+.cb-thumb { width: 54px; height: 54px; border-radius: 50%; background: var(--off) center/cover no-repeat; border: 1px solid var(--line); display: block; }
+.cb-photo[data-k='listing'] .cb-thumb { border-radius: 6px; width: 72px; }
+.cb-photo:not(.has) .cb-thumb::after { content: "+"; display: flex; align-items: center; justify-content: center; height: 100%; color: var(--slate); font-size: 22px; }
+.cb-photo.has { border-style: solid; border-color: var(--green); background: #F2FBF6; }
+.cb-photo.off { opacity: .55; }
+.cb-photo.off label { cursor: not-allowed; }
+.cb-rm { border: 0; background: none; color: var(--slate); font-size: 11px; text-decoration: underline; cursor: pointer; margin-top: 2px; padding: 0; }
+.cb-rm:hover { color: #9A3A26; }
 .cb-right { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .cb-right > .card { margin-top: 0; }
 .cb-stage-card { background: var(--off, #F6F7FA); }

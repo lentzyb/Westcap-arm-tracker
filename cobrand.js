@@ -20,7 +20,7 @@
 
   const st = {
     lo: null, realtor: null, realtors: [], listings: [], sold: [],
-    type: "just_listed", format: "square", photos: {}, f: {}, captionEdited: false, inited: false,
+    type: "just_listed", format: "square", photos: {}, saved: {}, f: {}, captionEdited: false, inited: false,
   };
   const first = (n) => String(n || "").trim().split(/\s+/)[0] || "";
   const initials = (n) => String(n || "").trim().split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
@@ -283,6 +283,44 @@
     } catch (e) { s.textContent = `Couldn't render: ${e.message}`; }
   }
 
+  // ---------- saved headshots (Supabase storage: lo/<nmls>.jpg, realtor/<agent id>.jpg) ----------
+  const BUCKET = "arm-headshots";
+  const shotPath = (k, id) => k === "lo" ? `lo/${id || st.lo.nmls}.jpg` : `realtor/${id || st.realtor.id}.jpg`;
+  function setPhoto(k, url, saved = false) {
+    if (st.photos[k]) URL.revokeObjectURL(st.photos[k]);
+    st.photos[k] = url; st.saved[k] = !!(url && saved);
+    drawPhotoTiles(); render();
+  }
+  function drawPhotoTiles() {
+    $$(".cb-photo").forEach((t) => {
+      const k = t.dataset.k, url = st.photos[k];
+      const who = k === "lo" ? st.lo : k === "realtor" ? st.realtor : true;
+      t.classList.toggle("has", !!url);
+      t.classList.toggle("off", !who);
+      $(".cb-thumb", t).style.backgroundImage = url ? `url("${url}")` : "";
+      $("small", t).textContent = !who ? `Pick the ${k === "lo" ? "LO" : "realtor"} first` : url ? (st.saved[k] ? "Saved · click to replace" : "Added · click to replace") : k === "listing" ? "Upload" : "Upload · saves for next time";
+      $(".cb-rm", t).classList.toggle("hidden", !url);
+    });
+  }
+  async function loadSaved(k, ids) {
+    for (const id of ids) {
+      const { data, error } = await sb.storage.from(BUCKET).download(shotPath(k, id));
+      if (!error && data) {
+        if (k === "realtor" && id !== st.realtor?.id) st.realtor.id = id;
+        return setPhoto(k, URL.createObjectURL(data), true);
+      }
+    }
+    setPhoto(k, null);
+  }
+  async function shrink(file, max = 800) {
+    const img = await createImageBitmap(file);
+    const k = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return await new Promise((r) => c.toBlob(r, "image/jpeg", 0.88));
+  }
+
   // ---------- data ----------
   async function pickLo() {
     const nmls = A.parseId(val("lo"));
@@ -292,6 +330,8 @@
     const { data: lo } = await sb.from("arm_loan_officers").select("nmls_id,full_name,email,mobile_phone,office_phone,office_city,office_state").eq("nmls_id", nmls).maybeSingle();
     st.lo = { nmls, name: lo?.full_name || A.loName(nmls), email: lo?.email || "", phone: lo?.mobile_phone || lo?.office_phone || "" };
     st.realtor = null; st.listings = []; st.sold = []; st.f = {};
+    setPhoto("realtor", null);
+    loadSaved("lo", [nmls]);
     const sel = form().elements.realtor;
     sel.disabled = true; sel.innerHTML = `<option>Loading realtors…</option>`;
     const rows = await A.fetchAll(() => sb.from("arm_lo_realtor_detail").select("mmi_agent_id,full_name,office_name,email,phone,lo_total_units,lo14_buyer_units,lo14_listing_units").eq("originator_nmls", nmls));
@@ -314,6 +354,7 @@
   async function pickRealtor() {
     const r = st.realtors[Number(form().elements.realtor.value)];
     st.realtor = r || null; st.f = {}; st.listings = []; st.sold = [];
+    if (r) loadSaved("realtor", r.ids); else setPhoto("realtor", null);
     if (r) {
       const [{ data: ls }, { data: sold }] = await Promise.all([
         sb.from("arm_realtor_listings").select("address,city,state,list_price,list_date").in("mmi_agent_id", r.ids).order("list_date", { ascending: false }),
@@ -346,12 +387,30 @@
     f.elements.realtor.addEventListener("change", pickRealtor);
     ["headline", "body"].forEach((n) => f.elements[n].addEventListener("input", render));
     f.elements.cost.addEventListener("change", render);
-    $$(".cb-photo input", f).forEach((inp) => inp.addEventListener("change", () => {
+    $$(".cb-photo input", f).forEach((inp) => inp.addEventListener("change", async () => {
       const file = inp.files?.[0]; const k = inp.dataset.photo;
-      if (st.photos[k]) URL.revokeObjectURL(st.photos[k]);
-      st.photos[k] = file ? URL.createObjectURL(file) : null;
-      inp.closest(".cb-photo").classList.toggle("has", !!file);
-      render();
+      inp.value = "";
+      if (!file) return;
+      if (k === "listing") { setPhoto(k, URL.createObjectURL(file)); return; }
+      const who = k === "lo" ? st.lo : st.realtor;
+      if (!who) return toast(`Pick the ${k === "lo" ? "loan officer" : "realtor"} first`);
+      const tile = $(`.cb-photo[data-k='${k}'] small`); tile.textContent = "Saving…";
+      try {
+        const blob = await shrink(file);
+        const { error } = await sb.storage.from(BUCKET).upload(shotPath(k), blob, { upsert: true, contentType: "image/jpeg", cacheControl: "60" });
+        if (error) throw error;
+        setPhoto(k, URL.createObjectURL(blob), true);
+        toast(`Headshot saved for ${who.name}`);
+      } catch (e) { tile.textContent = ""; toast(`Couldn't save the headshot: ${e.message}`); }
+    }));
+    $$(".cb-photo .cb-rm", f).forEach((b) => b.addEventListener("click", async () => {
+      const k = b.closest(".cb-photo").dataset.k;
+      if (k !== "listing" && st.saved[k]) {
+        const { error } = await sb.storage.from(BUCKET).remove([shotPath(k)]);
+        if (error) return toast(`Couldn't remove it: ${error.message}`);
+        toast("Headshot removed");
+      }
+      setPhoto(k, null);
     }));
     $("#cb-caption").addEventListener("input", () => { st.captionEdited = true; drawCheck(); });
     $("#cb-copy").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#cb-caption").value); toast("Caption copied"); } catch (_) { $("#cb-caption").select(); } });
@@ -359,6 +418,7 @@
     $("#cb-pdf").addEventListener("click", () => download("pdf"));
     window.addEventListener("resize", render);
     setType(st.type);
+    drawPhotoTiles();
   }
 
   A.loaders.cobrand = async () => {
