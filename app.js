@@ -603,8 +603,9 @@
         .sort((a, b) => String(b.mortgage_date || "").localeCompare(String(a.mortgage_date || "")));
       body.innerHTML = `
         <p class="eyebrow-dark">Relationship</p>
-        <h2 class="drawer-title">${esc(m.full_name)}</h2>
+        <h2 class="drawer-title"><button class="name-link open-profile" title="See every LO this realtor works with">${esc(m.full_name)}</button></h2>
         <div class="muted">${esc(m.office_name || "Brokerage not on file")}</div>
+        <button class="profile-link open-profile">See every LO ${esc(String(m.full_name || "").split(" ")[0])} works with, and their loan types →</button>
         <div class="drawer-sub">Transactions with ${esc(loNm)}</div>
         <div class="chips"><span class="chip">${period === "14m" ? "Last 14 months" : "All time"}</span><span class="chip">${side === "both" ? "Both sides" : side === "buyer" ? "Buyer side" : "Listing side"}</span>${m.profiles > 1 ? `<span class="chip">${m.profiles} Model Match profiles merged</span>` : ""}</div>
         <div class="drawer-stats">
@@ -629,6 +630,7 @@
           : `<tr><td colspan="4" class="empty">${pulled ? "No individual transactions on file for this window." : "Not loaded from Model Match yet."}</td></tr>`}
         </tbody></table>
         <div class="drawer-listings"></div>`;
+      $$(".open-profile", body).forEach((b) => b.addEventListener("click", () => openAgentProfile(m, { back: () => openRelationship(nmls, m, period, side), backLabel: `Back to transactions with ${loNm}` })));
     };
     draw(null, "", false);
     const read = async () => {
@@ -655,6 +657,99 @@
       if (ls?.length) $(".drawer-listings", body).innerHTML = `<h3>Active listings (${num(ls.length)})</h3><table class="tx-table"><tbody>
         ${ls.map((l) => `<tr><td class="muted nowrap">${date(l.list_date)}</td><td><strong>${esc(l.address)}</strong><div class="muted">${esc([l.city, l.state].filter(Boolean).join(", "))}</div></td><td class="num strong">${moneyShort(l.list_price)}</td></tr>`).join("")}</tbody></table>`;
     } catch (err) { draw([], `Couldn't load transactions: ${err.message}`, false); }
+  }
+
+  // ---------- Realtor profile: every LO the realtor works with, and the loan types ----------
+  const NONQM = /angel oak|deephaven|acra lending|verus|nqm funding|citadel servicing|a ?& ?d mortgage|a and d mortgage|newfi|sprout mortgage|change lending|athas capital|visio|kiavi|lima one|defy mortgage|champions funding|hometown equity|oaktree funding|logan finance|arc home|vista point|ahl funding|non-?qm|nonqm|carrington mortgage|quontic|admortgage/i;
+  const LT = {
+    conv: "Conventional", fha: "FHA", va: "VA", usda: "USDA", nonqm: "Non-QM", other: "Other", cash: "Cash or not recorded",
+  };
+  const LT_ORDER = ["conv", "fha", "va", "usda", "nonqm", "other", "cash"];
+  function loanKind(d) {
+    if (!d.financed) return "cash";
+    if (NONQM.test(String(d.lender_name || "")) || NONQM.test(String(d.company_name || ""))) return "nonqm";
+    const t = String(d.loan_type || "").toLowerCase();
+    return t === "conventional" ? "conv" : t === "fha" ? "fha" : t === "va" ? "va" : t === "usda" ? "usda" : "other";
+  }
+  const isWestCap = (d) => (d.originator_nmls && roster?.has(String(d.originator_nmls))) || /west capital lending|westcap/i.test(String(d.company_name || "") + " " + String(d.lender_name || ""));
+  const ltChips = (counts) => LT_ORDER.filter((k) => counts[k]).map((k) => `<span class="tchip lt lt-${k}">${esc(k === "cash" ? "Cash" : LT[k])} ${counts[k]}</span>`).join("");
+
+  async function openAgentProfile(m, opts = {}) {
+    const d = drawer(), body = $(".drawer-body", d);
+    d.classList.remove("hidden");
+    $(".drawer-panel", d).scrollTop = 0;
+    const st = { period: opts.period || "14m", side: "both", open: new Set() };
+    let deals = null, note = "";
+    const draw = () => {
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 14);
+      const seen = new Set();
+      const rows = (deals || []).filter((x) => (st.period === "all" || (x.sale_date && new Date(x.sale_date) >= cutoff)) && (st.side === "both" || x.side === st.side))
+        .filter((x) => { const k = `${String(x.address || "").toLowerCase()}|${x.sale_date}`; if (seen.has(k)) return false; seen.add(k); return true; })
+        .sort((a, b) => String(b.sale_date || "").localeCompare(String(a.sale_date || "")));
+      const fin = rows.filter((x) => x.financed);
+      const wcl = fin.filter(isWestCap);
+      const mix = {}; rows.forEach((x) => { const k = loanKind(x); mix[k] = (mix[k] || 0) + 1; });
+      // Group financed deals by loan officer.
+      const groups = new Map();
+      fin.forEach((x) => {
+        const key = x.originator_nmls || `c:${x.company_name || x.lender_name || "Unknown"}`;
+        if (!groups.has(key)) groups.set(key, { key, name: x.originator_name, nmls: x.originator_nmls, company: x.company_name || x.lender_name, deals: [], vol: 0, mix: {}, wcl: false });
+        const g = groups.get(key);
+        g.deals.push(x); g.vol += Number(x.loan_amount || 0);
+        const k = loanKind(x); g.mix[k] = (g.mix[k] || 0) + 1;
+        if (isWestCap(x)) g.wcl = true;
+      });
+      const los = [...groups.values()].sort((a, b) => b.deals.length - a.deals.length || b.vol - a.vol);
+      const total = rows.length || 1;
+      const seg = (cls, items, cur) => `<div class="seg ${cls}">${items.map(([v, l]) => `<button data-v="${v}" class="${v === cur ? "active" : ""}">${l}</button>`).join("")}</div>`;
+      body.innerHTML = `
+        ${opts.back ? `<button class="drawer-back-link">← ${esc(opts.backLabel || "Back")}</button>` : ""}
+        <p class="eyebrow-dark">Realtor profile</p>
+        <h2 class="drawer-title">${esc(m.full_name)}</h2>
+        <div class="muted">${esc(m.office_name || "Brokerage not on file")}</div>
+        <div class="drawer-contact">${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : `<span class="muted">No email on file</span>`} · ${phone(m.phone)}</div>
+        <div class="ap-controls">${seg("ap-period", [["14m", "Last 14 months"], ["all", "All time"]], st.period)}${seg("ap-side", [["buyer", "Buyer side"], ["listing", "Listing side"], ["both", "Both"]], st.side)}</div>
+        ${deals == null ? `<div class="empty" style="padding:24px 0">Loading every deal ${esc(String(m.full_name || "").split(" ")[0])} closed…</div>` : `
+        <div class="drawer-stats">
+          <div><span class="stat-l">Closed deals</span><span class="stat-v">${num(rows.length)}</span></div>
+          <div><span class="stat-l">Financed</span><span class="stat-v">${num(fin.length)}</span></div>
+          <div><span class="stat-l">Loan officers</span><span class="stat-v">${num(los.length)}</span></div>
+          <div><span class="stat-l">With WestCap</span><span class="stat-v">${num(wcl.length)}<small style="font-size:13px;color:var(--slate);font-weight:600"> of ${num(fin.length)}</small></span></div>
+        </div>
+        ${rows.length ? `<div class="mix"><div class="mix-bar">${LT_ORDER.filter((k) => mix[k]).map((k) => `<i class="lt-${k}" style="width:${(mix[k] / total) * 100}%" title="${LT[k]} ${mix[k]}"></i>`).join("")}</div>
+          <div class="mix-legend">${LT_ORDER.filter((k) => mix[k]).map((k) => `<span><i class="lt-${k}"></i>${esc(LT[k])} <b>${mix[k]}</b></span>`).join("")}</div></div>` : ""}
+        <h3 class="ap-h">Loan officers on ${esc(String(m.full_name || "").split(" ")[0])}'s deals</h3>
+        <div class="muted small">Click a loan officer to see the deals.</div>
+        <table class="ap-table"><thead><tr><th>Loan officer</th><th class="num">Deals</th><th class="num">Volume</th><th>Loan types</th><th class="num">Last deal</th></tr></thead><tbody>
+        ${los.length ? los.map((g, i) => `<tr class="ap-row${g.wcl ? " wcl" : ""}" data-k="${esc(g.key)}"><td><strong>${esc(g.name || "Loan officer not recorded")}</strong>${g.wcl ? `<span class="wcl-pill">WestCap</span>` : ""}<div class="muted">${esc(g.company || "")}${g.nmls ? ` · NMLS ${esc(g.nmls)}` : ""}</div></td>
+            <td class="num strong">${num(g.deals.length)}</td><td class="num">${moneyShort(g.vol)}</td><td>${ltChips(g.mix)}</td><td class="num muted">${date(g.deals[0].sale_date)}</td></tr>
+            ${st.open.has(g.key) ? `<tr class="ap-deals"><td colspan="5">${g.deals.map((x) => `<div class="d"><span class="muted">${date(x.sale_date)}</span><span><strong>${esc(x.address || "—")}</strong>, ${esc([x.city, x.state].filter(Boolean).join(", "))} <span class="muted">· ${x.side === "buyer" ? "Buyer side" : "Listing side"}</span><br>${ltChips({ [loanKind(x)]: 1 }).replace(/ 1</, "<")} <span class="muted">${esc(x.lender_name || "")}</span></span><span class="strong">${moneyShort(x.loan_amount)}</span></div>`).join("")}</td></tr>` : ""}`).join("")
+          : `<tr><td colspan="5" class="empty">No financed deals on file for this window.</td></tr>`}
+        </tbody></table>
+        <p class="ap-note">${num(mix.cash || 0)} of ${num(rows.length)} deals have no purchase loan on file: cash buyers, or loans not recorded yet (recent closings take 1 to 3 months to show up). Non-QM isn't labeled in public records, so it's flagged by lender name.${note ? " " + esc(note) : ""}</p>`}`;
+      if (opts.back) $(".drawer-back-link", body).addEventListener("click", opts.back);
+      $$(".ap-period button", body).forEach((b) => b.addEventListener("click", async () => { st.period = b.dataset.v; st.open.clear(); draw(); if (st.period === "all") await load("allTime"); }));
+      $$(".ap-side button", body).forEach((b) => b.addEventListener("click", () => { st.side = b.dataset.v; draw(); }));
+      $$("tr.ap-row", body).forEach((tr) => tr.addEventListener("click", () => { const k = tr.dataset.k; st.open.has(k) ? st.open.delete(k) : st.open.add(k); draw(); }));
+    };
+    const read = async () => {
+      const { data, error } = await sb.from("arm_agent_deals").select("*").in("mmi_agent_id", m.ids || [m.mmi_agent_id]);
+      if (error) throw error;
+      return data || [];
+    };
+    const load = async (scope) => {
+      try {
+        const { data, error } = await sb.functions.invoke("arm-details", { body: { action: "agent_deals", agent_ids: m.ids || [m.mmi_agent_id], scope } });
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+        note = data.paused ? `Not refreshed: ${data.paused}.` : data.capped ? `Showing the newest ${num(data.rows)} of ${num(data.total)} deals.` : "";
+        deals = await read();
+      } catch (err) { note = `Couldn't reach Model Match: ${err.message}`; deals = deals || []; }
+      draw();
+    };
+    draw();
+    try { deals = await read(); if (deals.length) draw(); } catch (_) { /* fall through to load */ }
+    await load(st.period === "all" ? "allTime" : "14m");
   }
 
   async function syncLoDetail(panel, force) {
