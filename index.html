@@ -188,12 +188,14 @@
             <p class="form-msg"></p>
           </form>
           <form class="card form" id="form-deploy">
-            <h3>Deploy an ARM to an LO</h3>
+            <h3>Assign LOs or states to an ARM</h3>
             <select name="arm_id" required class="arm-select"></select>
-            <input name="lo_lookup" required placeholder="LO name or NMLS" list="lo-options" autocomplete="off" />
-            <datalist id="lo-options"></datalist>
+            <input name="lo_lookup" placeholder="Add an LO: name or NMLS" list="lo-options" autocomplete="off" />
+            <div class="chips" id="deploy-lo-chips"></div>
+            <div class="state-picks" id="deploy-states"></div>
+            <p class="hint">A state covers every active LO based there, including LOs who join later.</p>
             <label>Start date <input name="start_date" type="date" /></label>
-            <button class="btn-gold" type="submit">Deploy</button>
+            <button class="btn-gold" type="submit">Assign</button>
             <p class="form-msg"></p>
           </form>
           <form class="card form" id="form-loan">
@@ -221,7 +223,7 @@
           </form>
         </div>
         <div class="card">
-          <h3>Deployments</h3>
+          <h3>Assignments</h3>
           <div class="table-wrap"><table id="deploy-table"></table></div>
         </div>
         <div class="card">

@@ -219,3 +219,20 @@ body:not(.role-arm) .arm-only { display: none !important; }
 .hello-wrap { margin: 4px 0 18px; }
 .hello { font-size: 28px; font-weight: 800; }
 .hello-wrap p { margin: 4px 0 0; }
+
+/* Assign LOs / states */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips:empty { display: none; }
+.chips .chip { display: inline-flex; align-items: center; gap: 6px; background: var(--navy); color: #fff; border-radius: 999px; padding: 4px 6px 4px 11px; font-size: 12px; }
+.chips .chip button { border: 0; background: rgba(255,255,255,.18); color: #fff; width: 18px; height: 18px; border-radius: 50%; cursor: pointer; line-height: 1; font-size: 13px; padding: 0; }
+.state-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.state-picks .sp-label { width: 100%; font-size: 12px; color: var(--slate); }
+.form .state-picks label.sp { flex-direction: row; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 8px; padding: 5px 9px; cursor: pointer; color: var(--navy); font-size: 13px; }
+.state-picks label.sp input { margin: 0; height: auto; }
+.state-picks label.sp small { color: var(--slate); font-size: 11px; }
+.state-picks label.sp:has(input:checked) { border-color: var(--gold); background: #FDF3DC; }
+.form .hint { font-size: 12px; color: var(--slate); margin: 0; }
+tr.ended td { color: var(--slate); opacity: .65; }
+.btn-sm { padding: 3px 10px; font-size: 12px; height: auto; }
+.btn-ghost { border: 1px solid var(--line); border-radius: var(--radius); background: #fff; color: var(--navy); cursor: pointer; }
+.btn-ghost:hover { border-color: var(--navy); }

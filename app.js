@@ -238,7 +238,7 @@
       $("#arm-home-los").innerHTML = los.length
         ? sig.sort((a, b) => (b.listed_now + b.likely_to_list) - (a.listed_now + a.likely_to_list))
             .map((s) => row(`<a href="#los" class="lo-jump" data-nmls="${esc(s.originator_nmls)}">${esc(loName(s.originator_nmls))}</a>`, `${num(s.listed_now)} listed · ${num(s.likely_to_list)} likely`)).join("")
-        : `<div class="empty">You haven't been deployed to any LOs yet. Your admin will add them.</div>`;
+        : `<div class="empty">You haven't been assigned any LOs or states yet. Your admin will add them.</div>`;
       $$(".lo-jump", $("#arm-home-los")).forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); $("#lo-search").value = a.dataset.nmls; show("los"); }));
     } catch (err) { fail($("#arm-home-kpis"), err); }
   }
@@ -686,14 +686,15 @@
   }
   loaders.arms = async () => {
     await getRoster();
-    if (isAdmin()) loadArmSelects();
+    if (isAdmin()) { loadArmSelects(); if (!$("#deploy-states").children.length) drawStatePicks(); }
     const head = (id, adminText, armText) => { const h = $(id).closest(".card")?.querySelector("h3"); if (h) h.textContent = isAdmin() ? adminText : armText; };
     head("#arm-volume-table", "Captured volume by ARM", "Your captured volume");
-    head("#deploy-table", "Deployments", "Your LOs");
+    head("#deploy-table", "Assignments", "Your LOs and states");
     head("#loans-table", "Credited loans", "Loans credited to you");
-    const [{ data: vol, error: e1 }, { data: deps, error: e2 }, { data: loans, error: e3 }] = await Promise.all([
+    const [{ data: vol, error: e1 }, { data: deps, error: e2 }, { data: sts }, { data: loans, error: e3 }] = await Promise.all([
       sb.from("arm_captured_volume").select("*").order("captured_volume", { ascending: false }),
       sb.from("arm_deployments").select("*, arm_arms(full_name)").order("start_date", { ascending: false }),
+      sb.from("arm_state_assignments").select("*, arm_arms(full_name)").order("start_date", { ascending: false }),
       sb.from("arm_attributed_loans").select("*, arm_arms(full_name), arm_realtors(full_name)").order("funded_date", { ascending: false, nullsFirst: false }).limit(200),
     ]);
     if (e1) return fail($("#arm-volume-table"), e1);
@@ -704,9 +705,7 @@
       ? `<thead><tr><th>ARM</th><th class="num">Funded loans</th><th class="num">Captured volume</th><th class="num">Existing relationships</th><th class="num">New relationships</th><th class="num">Variable comp</th></tr></thead><tbody>` +
         vol.map((v) => `<tr><td>${esc(v.arm_name)}</td><td class="num">${num(v.funded_loans)}</td><td class="num">${money(v.captured_volume)}</td><td class="num">${money(v.volume_existing_relationships)}</td><td class="num">${money(v.volume_new_relationships)}</td><td class="num">${money(v.arm_variable_comp)}</td></tr>`).join("") + `</tbody>`
       : `<tr><td class="empty">${isAdmin() ? "No ARMs yet. Add one below once the pilot hire is made." : "No credited loans yet."}</td></tr>`;
-    $("#deploy-table").innerHTML = e2 ? `<tr><td class="empty">${esc(e2.message)}</td></tr>` : (deps || []).length
-      ? `<thead><tr><th>ARM</th><th>Loan officer</th><th>Start</th><th>End</th></tr></thead><tbody>` + deps.map((d) => `<tr><td>${esc(d.arm_arms?.full_name)}</td><td>${esc(loName(d.originator_nmls))}</td><td>${date(d.start_date)}</td><td>${date(d.end_date)}</td></tr>`).join("") + `</tbody>`
-      : `<tr><td class="empty">No deployments yet.</td></tr>`;
+    renderAssignments(deps, sts, e2);
     $("#loans-table").innerHTML = e3 ? `<tr><td class="empty">${esc(e3.message)}</td></tr>` : (loans || []).length
       ? `<thead><tr><th>Funded</th><th>ARM</th><th>Loan officer</th><th>Realtor</th><th>Loan #</th><th class="num">Amount</th><th>How credited</th><th>Relationship</th></tr></thead><tbody>` +
         loans.map((l) => `<tr><td>${date(l.funded_date)}</td><td>${esc(l.arm_arms?.full_name || "—")}</td><td>${esc(loName(l.originator_nmls))}</td><td>${esc(l.arm_realtors?.full_name || "—")}</td><td>${esc(l.loan_number || "—")}</td><td class="num">${money(l.loan_amount)}</td><td>${esc({ manual: "Manual", los_tag: "LOS tag", co_branded_link: "Co-branded link", mmi_match: "Model Match" }[l.attribution_method])}</td><td>${esc(l.relationship_origin || "—")}</td></tr>`).join("") + `</tbody>`
@@ -735,16 +734,74 @@
     if (!d.email) return setMsg(f, "Enter the ARM's WestCap email. It's how they sign in.");
     const { error } = await sb.from("arm_arms").insert({ full_name: d.full_name, email: d.email || null, phone: d.phone || null, start_date: d.start_date || null, comp_bps: d.comp_bps ? Number(d.comp_bps) : 10 });
     if (error) return setMsg(f, `Couldn't save: ${error.message}`);
-    f.reset(); setMsg(f, ""); toast(`ARM added. ${d.full_name.split(" ")[0]} can sign in with ${d.email} and will see only the LOs you deploy them to.`); loaders.arms();
+    f.reset(); setMsg(f, ""); toast(`ARM added. ${d.full_name.split(" ")[0]} can sign in with ${d.email} and will see only the LOs and states you assign them.`); loaders.arms();
   });
-  $("#form-deploy").addEventListener("submit", async (e) => {
+  function renderAssignments(deps, sts, err) {
+    const t = $("#deploy-table");
+    if (err) return (t.innerHTML = `<tr><td class="empty">${esc(err.message)}</td></tr>`);
+    const today = new Date().toISOString().slice(0, 10);
+    const live = (r) => !r.end_date || r.end_date >= today;
+    const loCount = (st) => roster ? [...roster.values()].filter((l) => l.active && String(l.office_state || "").toUpperCase() === st).length : null;
+    const rows = [
+      ...(sts || []).map((r) => ({ ...r, kind: "state", label: `${esc(r.state)} <span class="muted">· all ${num(loCount(r.state))} active LOs based there</span>` })),
+      ...(deps || []).map((r) => ({ ...r, kind: "lo", label: esc(loName(r.originator_nmls)) })),
+    ].sort((a, b) => (live(b) - live(a)) || String(a.arm_arms?.full_name).localeCompare(String(b.arm_arms?.full_name)) || (a.kind === "state" ? -1 : 1));
+    if (!rows.length) return (t.innerHTML = `<tr><td class="empty">No assignments yet.</td></tr>`);
+    t.innerHTML = `<thead><tr><th>ARM</th><th>Type</th><th>Covers</th><th>Start</th><th>End</th>${isAdmin() ? "<th></th>" : ""}</tr></thead><tbody>` +
+      rows.map((r) => `<tr class="${live(r) ? "" : "ended"}"><td>${esc(r.arm_arms?.full_name)}</td><td>${r.kind === "state" ? "State" : "LO"}</td><td>${r.label}</td><td>${date(r.start_date)}</td><td>${date(r.end_date)}</td>${isAdmin() ? `<td>${live(r) ? `<button class="btn-ghost btn-sm end-assign" data-kind="${r.kind}" data-id="${r.id}">End</button>` : ""}</td>` : ""}</tr>`).join("") + `</tbody>`;
+    $$(".end-assign", t).forEach((b) => b.addEventListener("click", async () => {
+      b.disabled = true;
+      const table = b.dataset.kind === "state" ? "arm_state_assignments" : "arm_deployments";
+      const { error } = await sb.from(table).update({ end_date: new Date().toISOString().slice(0, 10) }).eq("id", b.dataset.id);
+      if (error) { b.disabled = false; return toast(`Couldn't end it: ${error.message}`); }
+      toast("Assignment ended"); loaders.arms();
+    }));
+  }
+
+  // Multi-pick LOs and states for an ARM.
+  const pickedLos = new Set();
+  const deployForm = $("#form-deploy");
+  function drawLoChips() {
+    $("#deploy-lo-chips").innerHTML = [...pickedLos].map((n) => `<span class="chip">${esc(loName(n))}<button type="button" data-n="${esc(n)}" aria-label="Remove">×</button></span>`).join("");
+    $$("#deploy-lo-chips button").forEach((b) => b.addEventListener("click", () => { pickedLos.delete(b.dataset.n); drawLoChips(); }));
+  }
+  function addLoFromInput() {
+    const inp = $("input[name='lo_lookup']", deployForm), n = parseId(inp.value);
+    if (n && roster?.has(n)) { pickedLos.add(n); inp.value = ""; drawLoChips(); setMsg(deployForm, ""); return true; }
+    return false;
+  }
+  $("input[name='lo_lookup']", deployForm).addEventListener("change", addLoFromInput);
+  $("input[name='lo_lookup']", deployForm).addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (!addLoFromInput()) setMsg(deployForm, "Pick an LO from the list."); } });
+  async function drawStatePicks() {
+    await getRoster();
+    const counts = {};
+    roster.forEach((l) => { const st = String(l.office_state || "").toUpperCase(); if (l.active && st) counts[st] = (counts[st] || 0) + 1; });
+    $("#deploy-states").innerHTML = `<div class="sp-label">States</div>` + Object.entries(counts).sort((a, b) => b[1] - a[1])
+      .map(([st, c]) => `<label class="sp"><input type="checkbox" name="states" value="${st}"><span>${st}</span><small>${num(c)}</small></label>`).join("");
+  }
+  deployForm.addEventListener("submit", async (e) => {
     e.preventDefault();
-    const f = e.target, d = formData(f), nmls = parseId(d.lo_lookup);
+    const f = e.target, d = formData(f);
+    if (d.lo_lookup) addLoFromInput();
+    const states = $$("input[name='states']:checked", f).map((c) => c.value);
     if (!d.arm_id) return setMsg(f, "Choose an ARM.");
-    if (!nmls || !roster?.has(nmls)) return setMsg(f, "Pick an LO from the list.");
-    const { error } = await sb.from("arm_deployments").insert({ arm_id: d.arm_id, originator_nmls: nmls, start_date: d.start_date || undefined });
-    if (error) return setMsg(f, `Couldn't save: ${error.message}`);
-    f.reset(); setMsg(f, ""); toast("ARM deployed"); loaders.arms();
+    if (!pickedLos.size && !states.length) return setMsg(f, "Add at least one LO or check a state.");
+    const start = d.start_date || undefined;
+    const [{ data: openDeps }, { data: openSts }] = await Promise.all([
+      sb.from("arm_deployments").select("originator_nmls").eq("arm_id", d.arm_id).is("end_date", null),
+      sb.from("arm_state_assignments").select("state").eq("arm_id", d.arm_id).is("end_date", null),
+    ]);
+    const haveLo = new Set((openDeps || []).map((r) => r.originator_nmls)), haveSt = new Set((openSts || []).map((r) => r.state));
+    const newLos = [...pickedLos].filter((n) => !haveLo.has(n)), newSts = states.filter((s) => !haveSt.has(s));
+    const errs = [];
+    if (newLos.length) { const { error } = await sb.from("arm_deployments").insert(newLos.map((n) => ({ arm_id: d.arm_id, originator_nmls: n, start_date: start }))); if (error) errs.push(error.message); }
+    if (newSts.length) { const { error } = await sb.from("arm_state_assignments").insert(newSts.map((s) => ({ arm_id: d.arm_id, state: s, start_date: start }))); if (error) errs.push(error.message); }
+    if (errs.length) return setMsg(f, `Couldn't save: ${errs.join("; ")}`);
+    const skipped = pickedLos.size - newLos.length + states.length - newSts.length;
+    const parts = [newLos.length && `${newLos.length} LO${newLos.length > 1 ? "s" : ""}`, newSts.length && `${newSts.length} state${newSts.length > 1 ? "s" : ""}`].filter(Boolean);
+    f.reset(); pickedLos.clear(); drawLoChips(); setMsg(f, "");
+    toast(parts.length ? `Assigned ${parts.join(" and ")}${skipped ? ` (${skipped} already assigned)` : ""}` : "Those are already assigned to this ARM");
+    loaders.arms();
   });
   $("#form-loan").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -782,7 +839,7 @@
     $("#runs-table").innerHTML = `<thead><tr><th>Started</th><th>Feed</th><th>Result</th><th class="num">Rows</th><th>Note</th></tr></thead><tbody>` +
       (runs || []).map((r) => `<tr><td>${dateTime(r.started_at)}</td><td>${esc(label[r.signal_type] || r.signal_type)}</td><td>${r.error ? (String(r.error).startsWith("paused") ? "Paused" : "Error") : !r.finished_at ? "Running" : r.changed === false ? "No new data" : r.partial ? "Continuing" : "Updated"}</td><td class="num">${num(r.rows_upserted || 0)}</td><td class="muted">${esc(r.error || "")}</td></tr>`).join("") + `</tbody>`;
     $("#admins").innerHTML = (admins || []).map((a) => row(`${esc(a.full_name || a.email)}<div class="muted">${esc(a.email)}</div>`, "Admin · sees everything")).join("") +
-      (arms || []).filter((a) => a.email).map((a) => row(`${esc(a.full_name)}<div class="muted">${esc(a.email)}</div>`, a.active ? "ARM · sees only their deployed LOs" : "ARM · inactive, no access")).join("") +
+      (arms || []).filter((a) => a.email).map((a) => row(`${esc(a.full_name)}<div class="muted">${esc(a.email)}</div>`, a.active ? "ARM · sees only their assigned LOs and states" : "ARM · inactive, no access")).join("") +
       `<p class="muted" style="margin:10px 0 0;font-size:12px">ARMs get a login when you add them on the ARMs tab with their WestCap email. They sign in with a one-time email link the first time, then set a password. To add another admin, ask Claude.</p>`;
   };
 
