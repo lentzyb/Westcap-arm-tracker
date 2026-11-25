@@ -617,6 +617,7 @@
         </div>
         <div class="drawer-contact">${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : `<span class="muted">No email on file</span>`} · ${phone(m.phone)}
           ${m.hasStats ? `<div class="muted">Realtor's own last 14 months: ${moneyShort(m.realtor14.both)} · ${num(m.realtor14.units)} deals · ${num(m.active)} active listings</div>` : ""}</div>
+        <div class="bonzo-slot"></div>
         ${note ? `<div class="note small">${esc(note)}</div>` : ""}
         <table class="tx-table"><thead><tr><th>Transaction date</th><th>Property</th><th>Loan type</th><th class="num">Loan amount</th></tr></thead><tbody>
         ${loans == null ? `<tr><td colspan="4" class="empty">Loading transactions…</td></tr>`
@@ -631,7 +632,8 @@
           : `<tr><td colspan="4" class="empty">${pulled ? "No individual transactions on file for this window." : "Not loaded from Model Match yet."}</td></tr>`}
         </tbody></table>
         <div class="drawer-listings"></div>`;
-      $$(".open-profile", body).forEach((b) => b.addEventListener("click", () => openAgentProfile(m, { back: () => openRelationship(nmls, m, period, side), backLabel: `Back to transactions with ${loNm}` })));
+      $$(".open-profile", body).forEach((b) => b.addEventListener("click", () => openAgentProfile(m, { nmls, back: () => openRelationship(nmls, m, period, side), backLabel: `Back to transactions with ${loNm}` })));
+      bonzoButton($(".bonzo-slot", body), m, nmls, () => relationshipNotes(m, nmls, tx));
     };
     draw(null, "", false);
     const read = async () => {
@@ -709,6 +711,7 @@
         <h2 class="drawer-title">${esc(m.full_name)}</h2>
         <div class="muted">${esc(m.office_name || "Brokerage not on file")}</div>
         <div class="drawer-contact">${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : `<span class="muted">No email on file</span>`} · ${phone(m.phone)}</div>
+        <div class="bonzo-slot"></div>
         <div class="ap-controls">${seg("ap-period", [["14m", "Last 14 months"], ["all", "All time"]], st.period)}${seg("ap-side", [["buyer", "Buyer side"], ["listing", "Listing side"], ["both", "Both"]], st.side)}</div>
         ${deals == null ? `<div class="empty" style="padding:24px 0">Loading every deal ${esc(String(m.full_name || "").split(" ")[0])} closed…</div>` : `
         <div class="drawer-stats">
@@ -729,6 +732,7 @@
         </tbody></table>
         <p class="ap-note">${num(mix.cash || 0)} of ${num(rows.length)} deals have no purchase loan on file: cash buyers, or loans not recorded yet (recent closings take 1 to 3 months to show up). Non-QM isn't labeled in public records, so it's flagged by lender name.${note ? " " + esc(note) : ""}</p>`}`;
       if (opts.back) $(".drawer-back-link", body).addEventListener("click", opts.back);
+      bonzoButton($(".bonzo-slot", body), m, opts.nmls, () => (opts.nmls ? relationshipNotes(m, opts.nmls, null) : []).concat(los.length ? [``, `Loan officers on ${first(m.full_name)}'s financed deals (${st.period === "all" ? "all time" : "last 14 months"}):`, ...los.slice(0, 6).map((g) => `- ${g.name || "Not recorded"}${g.company ? ` (${g.company})` : ""}: ${g.deals.length} deal${g.deals.length > 1 ? "s" : ""}${g.wcl ? " [WestCap]" : ""}`)] : []));
       $$(".ap-period button", body).forEach((b) => b.addEventListener("click", async () => { st.period = b.dataset.v; st.open.clear(); draw(); if (st.period === "all") await load("allTime"); }));
       $$(".ap-side button", body).forEach((b) => b.addEventListener("click", () => { st.side = b.dataset.v; draw(); }));
       $$("tr.ap-row", body).forEach((tr) => tr.addEventListener("click", () => { const k = tr.dataset.k; st.open.has(k) ? st.open.delete(k) : st.open.add(k); draw(); }));
@@ -751,6 +755,75 @@
     draw();
     try { deals = await read(); if (deals.length) draw(); } catch (_) { /* fall through to load */ }
     await load(st.period === "all" ? "allTime" : "14m");
+  }
+
+  // ---------- Push a realtor to the user's own Bonzo ----------
+  const first = (n) => String(n || "").trim().split(/\s+/)[0] || "";
+  let bonzoConnected = null;
+  async function isBonzoConnected() {
+    if (bonzoConnected == null) { const { data } = await sb.rpc("arm_bonzo_connected"); bonzoConnected = !!data; }
+    return bonzoConnected;
+  }
+  function relationshipNotes(m, nmls, tx) {
+    const L = loName(nmls), s14 = relStats(m, "14m", "both"), sAll = relStats(m, "all", "both");
+    const last = (tx && tx[0]) || null;
+    return [
+      `Relationship with ${L} (NMLS ${nmls}):`,
+      `- Last 14 months: ${num(s14.units)} deal${s14.units === 1 ? "" : "s"}, ${moneyShort(s14.volume)}${s14.shareKnown ? `, ${pct(s14.share)} of ${first(m.full_name)}'s financed business` : ""}`,
+      `- All time: ${num(sAll.units)} deal${sAll.units === 1 ? "" : "s"}, ${moneyShort(sAll.volume)}`,
+      ...(last ? [`- Latest deal together: ${date(last.mortgage_date)}, ${last.address || ""}${last.city ? ", " + last.city : ""}${last.loan_type ? ", " + String(last.loan_type).toUpperCase() : ""}, ${moneyShort(last.mortgage_amount)}`] : []),
+      ...(m.hasStats ? [`${first(m.full_name)}'s own last 14 months: ${num(m.realtor14.units)} deals, ${moneyShort(m.realtor14.both)}, ${num(m.active)} active listings`] : []),
+    ];
+  }
+  async function bonzoButton(slot, m, nmls, notesFn) {
+    if (!slot) return;
+    const ids = m.ids || [m.mmi_agent_id];
+    const { data: lastPush } = await sb.from("arm_bonzo_pushes").select("made_by,created_at,ok").in("mmi_agent_id", ids).eq("ok", true).order("created_at", { ascending: false }).limit(1);
+    const lp = lastPush?.[0];
+    const mine = (me?.email || "").toLowerCase();
+    slot.innerHTML = `<div class="bonzo-bar"><button type="button" class="btn-bonzo">Push to Bonzo</button>
+      <span class="muted small">${lp ? `Pushed ${date(lp.created_at)}${lp.made_by && lp.made_by.toLowerCase() !== mine ? ` by ${esc(lp.made_by.split("@")[0])}` : " by you"}` : "Adds them to your Bonzo with their deal history in the notes"}</span>
+      <button type="button" class="link-btn bonzo-settings">Bonzo connection</button></div><div class="bonzo-panel"></div>`;
+    const panel = $(".bonzo-panel", slot), btn = $(".btn-bonzo", slot);
+    const connectForm = (thenPush) => {
+      panel.innerHTML = `<div class="bonzo-connect">
+        <strong>Connect your Bonzo (one time)</strong>
+        <ol><li>In Bonzo, go to <b>Settings → Integrations</b> and create an inbound <b>Webhook</b> for new prospects.</li>
+          <li>Leave the campaign empty, or pick a realtor-outreach campaign. Don't attach a borrower campaign, or Bonzo will text the realtor borrower messages.</li>
+          <li>Copy the webhook URL (it starts with <span class="k">https://app.getbonzo.com/api/webhook/</span>) and paste it here.</li></ol>
+        <div class="bonzo-row"><input type="url" placeholder="https://app.getbonzo.com/api/webhook/…" class="bonzo-url"><button type="button" class="btn-gold bonzo-save">${thenPush ? "Save and push" : "Save"}</button></div>
+        ${bonzoConnected ? `<button type="button" class="link-btn bonzo-disconnect">Disconnect my Bonzo</button>` : ""}
+        <p class="muted small">Your webhook stays private to your login. Pushes always go into your own Bonzo.</p><p class="form-msg"></p></div>`;
+      $(".bonzo-save", panel).addEventListener("click", async () => {
+        const url = $(".bonzo-url", panel).value.trim();
+        if (!/^https:\/\/([a-z0-9-]+\.)*getbonzo\.com\//i.test(url)) return ($(".form-msg", panel).textContent = "That doesn't look like a Bonzo webhook URL.");
+        const { error } = await sb.from("arm_bonzo_hooks").upsert({ email: me.email.toLowerCase(), webhook_url: url, updated_at: new Date().toISOString() }, { onConflict: "email" });
+        if (error) return ($(".form-msg", panel).textContent = `Couldn't save: ${error.message}`);
+        bonzoConnected = true; panel.innerHTML = ""; toast("Bonzo connected");
+        if (thenPush) push();
+      });
+      $(".bonzo-disconnect", panel)?.addEventListener("click", async () => {
+        const { error } = await sb.from("arm_bonzo_hooks").delete().eq("email", me.email.toLowerCase());
+        if (error) return toast(`Couldn't disconnect: ${error.message}`);
+        bonzoConnected = false; panel.innerHTML = ""; toast("Bonzo disconnected");
+      });
+    };
+    const push = async () => {
+      btn.disabled = true; btn.textContent = "Pushing…";
+      const notes = [`WestCap ARM Tracker · ${m.full_name}${m.office_name ? ` · ${m.office_name}` : ""}`, ``, ...(notesFn?.() || []), ``, `Pushed by ${me?.name || me?.email} on ${date(new Date().toISOString())}`].join("\n");
+      const tags = ["Realtor", "ARM Tracker", ...(nmls ? [`LO: ${loName(nmls)}`] : [])];
+      try {
+        const { data, error } = await sb.functions.invoke("arm-bonzo", { body: { action: "push", agent_ids: ids, nmls: nmls || null, lo_name: nmls ? loName(nmls) : "", contact: { name: m.full_name, email: m.email, phone: m.phone, company: m.office_name }, notes, tags } });
+        if (error) throw error;
+        if (data?.error === "not_connected") { bonzoConnected = false; btn.disabled = false; btn.textContent = "Push to Bonzo"; return connectForm(true); }
+        if (data?.error) throw new Error(data.error);
+        if (!data.ok) throw new Error(`Bonzo answered ${data.status || "nothing"}${data.response ? `: ${String(data.response).slice(0, 120)}` : ""}`);
+        btn.textContent = "In Bonzo ✓"; toast(`${m.full_name} pushed to your Bonzo`);
+        $(".muted.small", slot).textContent = `Pushed ${date(new Date().toISOString())} by you`;
+      } catch (e) { btn.disabled = false; btn.textContent = "Push to Bonzo"; toast(`Couldn't push: ${e.message}`); }
+    };
+    btn.addEventListener("click", async () => { (await isBonzoConnected()) ? push() : connectForm(true); });
+    $(".bonzo-settings", slot).addEventListener("click", async () => { await isBonzoConnected(); panel.innerHTML ? (panel.innerHTML = "") : connectForm(false); });
   }
 
   async function syncLoDetail(panel, force) {
