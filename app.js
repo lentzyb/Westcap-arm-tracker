@@ -797,13 +797,13 @@
       $(".bonzo-save", panel).addEventListener("click", async () => {
         const url = $(".bonzo-url", panel).value.trim();
         if (!/^https:\/\/([a-z0-9-]+\.)*getbonzo\.com\//i.test(url)) return ($(".form-msg", panel).textContent = "That doesn't look like a Bonzo webhook URL.");
-        const { error } = await sb.from("arm_bonzo_hooks").upsert({ email: me.email.toLowerCase(), webhook_url: url, updated_at: new Date().toISOString() }, { onConflict: "email" });
+        const { error } = await sb.rpc("arm_bonzo_connect", { url });
         if (error) return ($(".form-msg", panel).textContent = `Couldn't save: ${error.message}`);
         bonzoConnected = true; panel.innerHTML = ""; toast("Bonzo connected");
         if (thenPush) push();
       });
       $(".bonzo-disconnect", panel)?.addEventListener("click", async () => {
-        const { error } = await sb.from("arm_bonzo_hooks").delete().eq("email", me.email.toLowerCase());
+        const { error } = await sb.rpc("arm_bonzo_disconnect");
         if (error) return toast(`Couldn't disconnect: ${error.message}`);
         bonzoConnected = false; panel.innerHTML = ""; toast("Bonzo disconnected");
       });
